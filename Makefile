@@ -1,5 +1,8 @@
+SHELL = /bin/sh
+.SUFFIXES:
+.SUFFIXES: .c .o
 
-SUBDIRS		= src lib
+SUBDIRS		= src lib shrq_harness
 TESTDIRS	= src
 
 all:

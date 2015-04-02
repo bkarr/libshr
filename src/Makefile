@@ -1,3 +1,7 @@
+SHELL = /bin/sh
+.SUFFIXES:
+.SUFFIXES: .c .o
+
 CC = gcc
 OBJECTS = shared_q.o
 TESTEXE = test_shrq
