@@ -2,7 +2,7 @@ SHELL = /bin/sh
 .SUFFIXES:
 .SUFFIXES: .c .o
 
-SUBDIRS		= src lib shrq_harness
+SUBDIRS		= src lib shrq_harness sharedq
 TESTDIRS	= src
 
 all:
