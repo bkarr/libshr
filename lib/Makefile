@@ -1,5 +1,5 @@
 OBJECTS = ../src/shared_q.o
-LIB = libshrq.a
+LIB = libshr.a
 
 all: $(OBJECTS)
 	@ar -r $(LIB) $(OBJECTS)
