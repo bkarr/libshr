@@ -5,16 +5,17 @@ SHELL = /bin/sh
 CC = gcc
 OBJECTS = shared_q.o
 TESTEXE = test_shrq
+LIB = -lrt -lpthread
 
-all: CFLAGS = -I../include -c -g3 -O0 -std=gnu11 -pedantic -Wall -o "$@".o -lrt -lpthread
+all: CFLAGS = -I../include -c -g3 -O0 -std=gnu11 -pedantic -Wall -o "$@".o
 all: shared_q
 
-check: CFLAGS = -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE) -lrt -lpthread
+check: CFLAGS = -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
 check: clean shared_q
 	./$(TESTEXE)
 
 %: %.c
-	@$(CC) $< $(CFLAGS) $(LIBS)
+	@$(CC) $< $(CFLAGS) $(LIB)
 
 clean:
 	@if test -f $(TESTEXE); then \

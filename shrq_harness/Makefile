@@ -4,10 +4,10 @@ SHELL = /bin/sh
 
 CC = gcc
 EXE = shrq_harness
-LIB = -L../lib -lshr
+LIB = -L../lib -lshr -lrt -lpthread
 
-#CFLAGS = -I../include -DMTHRD -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE) -lrt -lpthread
-CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE) -lrt -lpthread
+#CFLAGS = -I../include -DMTHRD -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
 
 all: main
 
