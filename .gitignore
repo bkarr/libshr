@@ -27,9 +27,9 @@
 *.i*86
 *.x86_64
 *.hex
-test_shareq
+test_shrq
 sharedq/sharedq
-shrq_harness
+shrq_harness/shrq_harness
 
 # Packages #
 ############
