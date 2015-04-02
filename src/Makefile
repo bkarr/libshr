@@ -5,8 +5,8 @@ TESTEXE = test_shrq
 all: CFLAGS = -I../include -c -g3 -O0 -std=gnu11 -pedantic -Wall -o "$@".o -lrt -lpthread
 all: shared_q
 
-test: CFLAGS = -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE) -lrt -lpthread
-test: clean shared_q
+check: CFLAGS = -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE) -lrt -lpthread
+check: clean shared_q
 	./$(TESTEXE)
 
 %: %.c
@@ -20,4 +20,4 @@ clean:
 		rm $(OBJECTS); \
 	fi
 
-.PHONY: all clean test
+.PHONY: all clean check

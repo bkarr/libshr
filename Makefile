@@ -20,11 +20,11 @@ clean:
 		cd ..; \
 	done
 
-test:
+check:
 	set -e
 	for i in $(TESTDIRS); \
 	do \
 		cd $$i; \
-		$(MAKE) test; \
+		$(MAKE) check; \
 		cd ..; \
 	done
