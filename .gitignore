@@ -27,3 +27,19 @@
 *.i*86
 *.x86_64
 *.hex
+test_shareq
+sharedq/sharedq
+shrq_harness
+
+# Packages #
+############
+# it's better to unpack these files and commit the raw source
+# git has its own built in compression methods
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
