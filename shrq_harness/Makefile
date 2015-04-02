@@ -3,7 +3,6 @@ SHELL = /bin/sh
 .SUFFIXES: .c .o
 
 CC = gcc
-SOURCES = $(wildcard *.c)
 EXE = shrq_harness
 LIB = -L../lib -lshr
 
