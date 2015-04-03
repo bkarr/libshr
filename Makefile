@@ -6,8 +6,8 @@ SUBDIRS		= src lib shrq_harness sharedq
 TESTDIRS	= src
 
 all:
-	set -e
-	for i in $(SUBDIRS); \
+	@set -e
+	@for i in $(SUBDIRS); \
 	do \
 		cd $$i; \
 		$(MAKE); \
@@ -15,8 +15,8 @@ all:
 	done
 
 clean:
-	set -e
-	for i in $(SUBDIRS); \
+	@set -e
+	@for i in $(SUBDIRS); \
 	do \
 		cd $$i; \
 		$(MAKE) clean; \
@@ -24,8 +24,8 @@ clean:
 	done
 
 check:
-	set -e
-	for i in $(TESTDIRS); \
+	@set -e
+	@for i in $(TESTDIRS); \
 	do \
 		cd $$i; \
 		$(MAKE) check; \
