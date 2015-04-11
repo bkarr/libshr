@@ -14,4 +14,7 @@ clean:
 		rm ./$(LIB); \
 	fi
 
-.PHONY: all clean
+install:
+	@cp $(LIB) /usr/lib/.
+
+.PHONY: all clean install

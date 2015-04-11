@@ -4,6 +4,7 @@ SHELL = /bin/sh
 
 SUBDIRS		= src lib shrq_harness sharedq
 TESTDIRS	= src
+INSTDIRS	= include lib sharedq
 
 all:
 	@set -e
@@ -31,3 +32,15 @@ check:
 		$(MAKE) check; \
 		cd ..; \
 	done
+
+install:
+		@set -e
+		@for i in $(INSTDIRS); \
+		do \
+			cd $$i; \
+			$(MAKE) install; \
+			cd ..; \
+		done
+
+
+.PHONY: all clean check install

@@ -18,4 +18,7 @@ clean:
 		rm ./$(EXE); \
 	fi
 
-.PHONY: all clean
+install:
+	@cp $(EXE) /usr/bin/.
+
+.PHONY: all clean install
