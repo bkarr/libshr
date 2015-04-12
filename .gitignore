@@ -1,3 +1,6 @@
+#Core files
+core*
+
 # Object files
 *.o
 *.ko
