@@ -1,5 +1,10 @@
 # libshr
 
+<a href="https://scan.coverity.com/projects/4816">
+  <img alt="Coverity Scan Build Status"
+       src="https://scan.coverity.com/projects/4816/badge.svg"/>
+</a>
+
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
 
@@ -64,7 +69,7 @@ Performance/stress test:
 ## Install
     ~/libshr $ sudo make install
 
-## Command line example
+## Command line demo
 
     ~/libshr/sharedq $ ./sharedq help
     sharedq [modifiers] <cmd>
