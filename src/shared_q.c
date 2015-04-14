@@ -450,7 +450,6 @@ static void add_end(
     view_s view = {.extent = q->current};
     int64_t *array = view.extent->array;
 
-    assert(slot >= HDR_END);
     array[slot] = slot;
     next_after.low = slot;
 
@@ -525,7 +524,6 @@ static view_s resize_extent(
     extent_s *tail = view.extent;
     if (CAS((intptr_t*)&tail->next, (intptr_t)NULL, (intptr_t)next)) {
         CAS((intptr_t*)&q->current, (intptr_t)tail, (intptr_t)next);
-        view.extent = next;
     } else {
         CAS((intptr_t*)&q->current, (intptr_t)tail, (intptr_t)tail->next);
         munmap(next->array, next->size);
@@ -619,12 +617,11 @@ static view_s insure_in_range(
     int64_t slot
 )   {
     view_s view = {.status = SH_OK, .slot = 0, .extent = q->current};
-    if (q == NULL || slot < HDR_END) {
+    if (slot < HDR_END) {
         return view;
     }
     if (slot >= view.extent->slots) {
         view = resize_extent(q, view.extent);
-        assert(slot < view.extent->slots);
     }
     view.slot = slot;
     return view;
@@ -1138,14 +1135,12 @@ static int64_t lookup_freed_data(
     if (q == NULL || slots < 2) {
         return 0;
     }
-    view_s view = {.extent = q->current};
-    int64_t *array = view.extent->array;
     int64_t index = find_leaf(q, slots, ROOT_FREE);
     if (index == 0) {
         return 0;
     }
-    view = insure_in_range(q, index);
-    array = view.extent->array;
+    view_s view = insure_in_range(q, index);
+    int64_t *array = view.extent->array;
     idx_leaf_s *leaf = (idx_leaf_s*)&array[index];
     if (slots != leaf->count) {
         return 0;
@@ -1466,6 +1461,13 @@ static sq_item_s deq(
             break;
         }
         array = view.extent->array;
+        int64_t end_slot = data_slot + array[data_slot + DATA_SLOTS] - 1;
+        view = insure_in_range(q, end_slot);
+        if (view.slot == 0) {
+            break;
+        }
+        array = view.extent->array;
+
         // copy data to buffer
         int64_t size = (array[data_slot + DATA_SLOTS] << 3) - sizeof(int64_t);
         if (*buffer && *buff_size < size) {
@@ -1482,7 +1484,6 @@ static sq_item_s deq(
             }
         }
 
-        assert(size >= 1 && size < (array[0] << 3));
         memcpy(*buffer, &array[data_slot + 1], size);
         item.buffer = *buffer;
         item.buf_size = size;
@@ -1616,7 +1617,6 @@ extern sh_status_e shr_q_create(
 )   {
     if (q == NULL ||
         name == NULL ||
-        max_depth < 0 ||
         max_depth > SEM_VALUE_MAX) {
         return SH_ERR_ARG;
     }
@@ -1665,8 +1665,8 @@ extern sh_status_e shr_q_open(
     struct stat statbuf;
     int bsize = sizeof(SHR_OBJ_DIR) + strlen(name);
     char nm_buffer[bsize];
-    memset(nm_buffer, 0, bsize);
-    memcpy(nm_buffer, SHR_OBJ_DIR, sizeof(SHR_OBJ_DIR));
+    memset(&nm_buffer[0], 0, bsize);
+    memcpy(&nm_buffer[0], SHR_OBJ_DIR, sizeof(SHR_OBJ_DIR));
     int index = sizeof(SHR_OBJ_DIR) - 1;
     if (name[0] == '/') {
         index--;

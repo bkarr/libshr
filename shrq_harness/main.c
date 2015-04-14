@@ -281,7 +281,7 @@ int main(
 
     srandom(time(NULL));
 
-    remove("/dev/shm/testq");
+    (void)remove("/dev/shm/testq");
 
     if (argc != 4) {
         fprintf(stderr, "%s: <ncpus> <nthreads> <iterations>\n",

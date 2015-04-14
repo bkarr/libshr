@@ -426,21 +426,19 @@ void queue_from_file(
     void *data = mmap(0, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (data == MAP_FAILED) {
         printf("sharedq: unable to map file\n");
+        close(fd);
         return;
     }
 
     sh_status_e status = shr_q_add(q, data, st.st_size);
     if (status == SH_ERR_ARG) {
         printf("sharedq:  invalid argument for add function\n");
-        return;
     }
     if (status == SH_ERR_LIMIT) {
         printf("sharedq:  queue at depth limit\n");
-        return;
     }
     if (status == SH_ERR_NOMEM) {
         printf("sharedq:  not enough memory to complete add\n");
-        return;
     }
     munmap(data, st.st_size);
     close(fd);
@@ -494,14 +492,17 @@ void queue_from_stdin(
         sh_status_e status = shr_q_add(q, line, strlen(line));
         if (status == SH_ERR_ARG) {
             printf("sharedq:  invalid argument for add function\n");
+            free(line);
             return;
         }
         if (status == SH_ERR_LIMIT) {
             printf("sharedq:  queue at depth limit\n");
+            free(line);
             return;
         }
         if (status == SH_ERR_NOMEM) {
             printf("sharedq:  not enough memory to complete add\n");
+            free(line);
             return;
         }
     }
