@@ -405,21 +405,23 @@ void queue_from_file(
     shr_q_s *q,
     char *fname
 )   {
+    int fd = open(fname, O_RDONLY, FILE_MODE);
+    if (fd < 0) {
+        printf("sharedq: unable to open file\n");
+        return;
+    }
+
     struct stat st;
-    int rc = stat(fname, &st);
+    int rc = fstat(fd, &st);
     if (rc < 0) {
-        printf("sharedq: invalid file name\n");
+        printf("sharedq: invalid file\n");
+        close(fd);
         return;
     }
 
     if (!S_ISREG(st.st_mode)) {
         printf("sharedq: not a regular file\n");
-        return;
-    }
-
-    int fd = open(fname, O_RDONLY, FILE_MODE);
-    if (fd < 0) {
-        printf("sharedq: unable to open file\n");
+        close(fd);
         return;
     }
 
