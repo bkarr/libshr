@@ -128,8 +128,8 @@ void *validate_producer(
     assert(status == SH_OK);
 #endif
     assert(wait() == 0);
+    ptr = (unsigned long *)malloc(CACHE_SIZE);
     for (i = 0; i < iterations; ++i) {
-        ptr = (unsigned long *)malloc(CACHE_SIZE);
         assert(ptr);
         //printf("add %lx\n", (uint64_t)ptr);
         *ptr = AAF(&input, 1);
@@ -138,6 +138,7 @@ void *validate_producer(
         while (shr_q_add(q, (void *)ptr, CACHE_SIZE) != SH_OK)
             printf("add failed\n");
     }
+    free(ptr);
     AAF(&verif, total);
     #ifndef MTHRD
         shr_q_close(&q);
