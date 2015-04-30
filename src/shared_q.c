@@ -86,10 +86,6 @@ enum shr_q_disp
     ROOT_RDX,                       // radix info for root
     EVENT_TAIL,                     // event queue tail
     EVENT_TL_CNT,                   // event queue tail counter
-    AVG_LMT_SEC,                    // average time limit in seconds
-    AVG_LMT_NSEC,                   // average time limit in nanoseconds
-    TOTAL_SEC,                      // total seconds of items on queue
-    TOTAL_NSEC,                     // total nanoseconds of items on queue
     HEAD,                           // item queue head
     HEAD_CNT,                       // item queue head counter
     FREE_TAIL,                      // free node list tail
@@ -106,7 +102,7 @@ enum shr_q_disp
     WRITE_SEM = (READ_SEM + 4),     // write semaphore
     IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
     AVAIL = (IO_SEM +4),            // next avail free slot
-    HDR_END = (AVAIL + 18),         // end of queue header
+    HDR_END = (AVAIL + 22),         // end of queue header
 };
 
 
@@ -1352,6 +1348,7 @@ static sh_status_e enq(
     curr_time.tv_sec = array[data_slot + TM_SEC];
     curr_time.tv_nsec = array[data_slot + TM_NSEC];
 
+
     // allocate queue node
     view_s view = alloc_node_slots(q);
     if (view.slot == 0) {
@@ -2485,6 +2482,41 @@ extern sh_status_e shr_q_level(
 
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
+}
+
+
+/*
+    shr_q_timelimit -- sets time limit of item on queue before producing a max
+    time limit event
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_timelimit(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    int64_t seconds,            // number of seconds till event
+    int64_t nanoseconds         // number of nanoseconds till event
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t *array = q->current->array;
+    struct timespec prev;
+    struct timespec next;
+    next.tv_sec = seconds;
+    next.tv_nsec = nanoseconds;
+    do {
+        prev.tv_sec = array[LIMIT_SEC];
+        prev.tv_nsec = array[LIMIT_NSEC];
+    } while (!DWCAS((DWORD*)&array[LIMIT_SEC], (DWORD*)&prev, (DWORD*)&next));
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+
 }
 
 
