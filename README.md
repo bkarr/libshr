@@ -21,9 +21,9 @@ events
 - Event for very initial add, and not just add to empty queue
 - Configurable performance related events for monitoring
 
-#### Completed
+#### Working
 - shared_q -- interprocess queueing of arbitrary sized data of any type,
-still developing unit tests and tuning and optimization will be ongoing
+still developing unit tests, and tuning and optimization will be ongoing
 - shrq_harness -- multi-threaded test harness for performance/stress testing
 shared_q
 - sharedq -- command line utility for managing/testing queues
