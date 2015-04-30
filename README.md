@@ -22,14 +22,13 @@ events
 - Configurable performance related events for monitoring
 
 #### Completed
+- shared_q -- interprocess queueing of arbitrary sized data of any type,
+still developing unit tests and tuning and optimization will be ongoing
 - shrq_harness -- multi-threaded test harness for performance/stress testing
 shared_q
 - sharedq -- command line utility for managing/testing queues
 
 #### Partially working
-- shared_q -- interprocess queueing of arbitrary sized data of any type,
-performance related counters, as well as, tuning and optimization still to be
-completed
 
 #### Planned
 - shared_map -- associative map of key/value pairs of arbitrary data
@@ -57,13 +56,14 @@ Performance/stress test:
     ~/libshr $ cd shrq_harness
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
     input SUM[0..100000]=5000050000 output=5000050000
-    time:  0.0814
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 625000
-    input SUM[0..2500000]=3125001250000 output=3125001250000
-    time:  0.9438
+    time:  0.0762
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 550000
+    input SUM[0..2200000]=2420001100000 output=2420001100000
+    time:  0.9936
+
 
  Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the
- harness can write to and read from the queue at a rate of 2.5 million items
+ harness can write to and read from the queue at a rate of 2.2 million items
  per second.
 
 ## Install
