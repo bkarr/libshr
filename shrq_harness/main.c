@@ -58,7 +58,7 @@ THE SOFTWARE.
   } while (0)
 
 #define AAF __sync_add_and_fetch
-#define CACHE_SIZE 64
+#define VALUE_SIZE 32
 #define QNAME "testq"
 
 typedef struct proc_item pitem_t;
@@ -128,14 +128,14 @@ void *validate_producer(
     assert(status == SH_OK);
 #endif
     assert(wait() == 0);
-    ptr = (unsigned long *)malloc(CACHE_SIZE);
+    ptr = (unsigned long *)malloc(VALUE_SIZE);
     for (i = 0; i < iterations; ++i) {
         assert(ptr);
         //printf("add %lx\n", (uint64_t)ptr);
         *ptr = AAF(&input, 1);
         //printf("%li\n", *ptr);
         total += *ptr;
-        while (shr_q_add(q, (void *)ptr, CACHE_SIZE) != SH_OK)
+        while (shr_q_add(q, (void *)ptr, VALUE_SIZE) != SH_OK)
             printf("add failed\n");
     }
     free(ptr);
