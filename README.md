@@ -20,8 +20,6 @@ maximum
 events
 - Event for very initial add, and not just add to empty queue
 - Configurable performance related events for monitoring
-- Performance related data tracking such as average time on queue, high-water
-mark for depth, average queue depth, etc.
 
 #### Completed
 - shrq_harness -- multi-threaded test harness for performance/stress testing
