@@ -31,19 +31,20 @@ THE SOFTWARE.
     Implementation of a queue in linear, shared memory space that is accessible
     by multiple processes.  The implementation attempts to be lock-free as much
     as possible, with the exception of expanding the queue dynamically
-    because the shared memory object cannot be resized atomically to always be the
-    largest required size.
+    because the shared memory object cannot be resized atomically to always be
+    the largest required size.
 
     Any unique name, with an optional '/' prefix, as a valid name for POSIX
     shared memory object can be used for the queue name.  A single process
     should be responsible for creating the queue since a race condition exists,
-    but all other processes can simply open an existing queue by name after it is
-    created, and can share that queue instance among threads internally.
+    but all other processes can simply open an existing queue by name after it
+    is created, and can share that queue instance among threads internally.
 
     The shared queue allows items of arbitrary size to be added and removed.  In
     addition, the only limit to number of queues is the number of open files per
-    process.  The queue size limit is the system max shared memory size and max file
-    size.  The maximum limit on the number of items in queue is SEM_VALUE_MAX.
+    process.  The queue size limit is the system max shared memory size and max
+    file size.  The maximum limit on the number of items in queue is
+    SEM_VALUE_MAX.
 
     A single process can request notification that an event is available for
     reading from queue, and the notified process should read events until a
@@ -53,7 +54,8 @@ THE SOFTWARE.
     linear array of 64-bit signed integers.  Embedded within the array are a
     list of available nodes, a critbit trie that tracks free data blocks, a
     lock-free queue of events, and a lock-free queue of references to data
-    blocks.  The node list and critbit trie are used for internal memory management.
+    blocks.  The node list and critbit trie are used for internal memory
+    management.
 
     Note:
 
@@ -464,8 +466,27 @@ extern sh_status_e shr_q_level(
 );
 
 
+/*
+    shr_q_timelimit -- sets time limit of item on queue before producing a max
+    time limit event
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_timelimit(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    int64_t seconds,            // number of seconds till event
+    int64_t nanoseconds         // number of nanoseconds till event
+);
+
+
+
 #ifdef __cplusplus
 }
+
 #endif
 
 
