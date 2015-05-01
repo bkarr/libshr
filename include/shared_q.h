@@ -218,8 +218,7 @@ extern sh_status_e shr_q_destroy(
     SH_OK           on success
     SH_ERR_ARG      if pointer to queue struct is NULL, or if signal not greater
                     than or equal to zero, or signal not in valid range
-    SH_ERR_STATE    if registering and pid is not zero, or unregistering and pid
-                    does not match
+    SH_ERR_STATE    if unable to add pid, or unregistering and pid does not match
 */
 extern sh_status_e shr_q_monitor(
     shr_q_s *q,         // pointer to queue struct
@@ -241,8 +240,7 @@ extern sh_status_e shr_q_monitor(
     SH_OK           on success
     SH_ERR_ARG      if pointer to queue struct is NULL, or if signal not greater
                     than or equal to zero, or signal not in valid range
-    SH_ERR_STATE    if registering and pid is not zero, or unregistering and pid
-                    does not match
+    SH_ERR_STATE    if unable to add pid, or unregistering and pid does not match
 */
 extern sh_status_e shr_q_listen(
     shr_q_s *q,         // pointer to queue struct
