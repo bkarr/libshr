@@ -30,6 +30,8 @@ THE SOFTWARE.
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/limits.h>
+#include <semaphore.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +65,7 @@ char *cmd_str[] = {
     "add",
     "remove",
     "drain",
+    "watch",
 };
 
 typedef enum cmd_codes {
@@ -72,13 +75,18 @@ typedef enum cmd_codes {
     LIST,
     ADD,
     REMOVE,
-    DUMP,
+    DRAIN,
+    WATCH,
     CODE_MAX
 } cmd_code_e;
 
+static int running = 1;
+static sem_t adds;
+static sem_t events;
+
 void sharedq_help_create()
 {
-    printf("sharedq create <name> [<maxdepth>]\n");
+    printf("sharedq [modifiers] create <name> [<maxdepth>]\n");
     printf("\n  --creates a named queue in shared memory\n");
     printf("\n  where:\n");
     printf("  <name>\t\tname of queue\n");
@@ -90,7 +98,7 @@ void sharedq_help_create()
 
 void sharedq_help_destroy()
 {
-    printf("sharedq destroy <name>\n");
+    printf("sharedq [modifiers] destroy <name>\n");
     printf("\n  --destroys a named queue in shared memory\n");
     printf("\n  where <name> is name of an existing queue\n\n");
     printf("\n   modifiers\t\t effects\n");
@@ -100,7 +108,7 @@ void sharedq_help_destroy()
 
 void sharedq_help_list()
 {
-    printf("sharedq list\n");
+    printf("sharedq [modifiers] list\n");
     printf("\n  --list of queues in shared memory\n\n");
     printf("\n   modifiers\t\t effects\n");
     printf("  -----------\t\t---------\n");
@@ -110,7 +118,7 @@ void sharedq_help_list()
 
 void sharedq_help_remove()
 {
-    printf("sharedq remove <name>\n");
+    printf("sharedq [modifiers] remove <name>\n");
     printf("\n  --remove an item from the specified queue\n");
     printf("\n  where <name> is name of an existing queue\n\n");
     printf("\n   modifiers\t\t effects\n");
@@ -122,7 +130,7 @@ void sharedq_help_remove()
 
 void sharedq_help_add()
 {
-    printf("sharedq add <name> [<file>]\n");
+    printf("sharedq [modifiers] add <name> [<file>]\n");
     printf("\n  --add an item to the specified queue\n");
     printf("\n  where:\n");
     printf("  <name>\t\tname of queue\n");
@@ -135,7 +143,7 @@ void sharedq_help_add()
 
 void sharedq_help_drain()
 {
-    printf("sharedq drain <name>\n");
+    printf("sharedq [modifiers] drain <name>\n");
     printf("\n  --drains all items in specified queue in hex format\n");
     printf("\n  where <name> is name of an existing queue\n\n");
     printf("\n   modifiers\t\t effects\n");
@@ -143,6 +151,15 @@ void sharedq_help_drain()
     printf("  -b\t\t\tblocks waiting for an item to arrive\n");
     printf("  -h\t\t\tprints help for the specified command\n");
     printf("  -x\t\t\tprints output as hex dump\n");
+}
+
+void sharedq_help_watch()
+{
+    printf("sharedq [modifiers] watch <name>\n");
+    printf("\n  --listens for an item being added to the specified queue when empty\n");
+    printf("\n   modifiers\t\t effects\n");
+    printf("  -----------\t\t---------\n");
+    printf("  -h\t\t\tprints help for the specified command\n");
 }
 
 void sharedq_help(int argc, char *argv[], int index)
@@ -157,6 +174,7 @@ void sharedq_help(int argc, char *argv[], int index)
     printf("  help\t\t\tprint list of commands\n");
     printf("  list\t\t\tlist of queues\n");
     printf("  remove\t\tremove item from queue\n");
+    printf("  watch\t\t\tlisten for add to empty queue\n");
     printf("\n   modifiers\t\t effects\n");
     printf("  -----------\t\t---------\n");
     printf("  -b\t\t\tblocks waiting for an item to arrive\n");
@@ -740,6 +758,62 @@ void sharedq_drain(int argc, char *argv[], int index)
 }
 
 
+void sharedq_watch(int argc, char *argv[], int index)
+{
+    if ((argc - index + 1) < 3 || (argc - index + 1) > 3)
+    {
+        sharedq_help_watch();
+        return;
+    }
+
+    modifiers_s param = parse_modifiers(argc, argv, index, "h");
+
+    if (param.help)
+    {
+        sharedq_help_watch();
+        return;
+    }
+
+    shr_q_s *q = NULL;
+    sh_status_e status = shr_q_open(&q, argv[index + 1], SQ_READ_ONLY);
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for open function\n");
+        return;
+    }
+    if (status == SH_ERR_ACCESS) {
+        printf("sharedq:  permission error for queue name\n");
+        return;
+    }
+    if (status == SH_ERR_EXIST) {
+        printf("sharedq:  queue name does not exist\n");
+        return;
+    }
+    if (status == SH_ERR_PATH) {
+        printf("sharedq:  error in queue name path\n");
+        return;
+    }
+    if (status == SH_ERR_SYS) {
+        printf("sharedq:  system call error\n");
+        return;
+    }
+
+    shr_q_listen(q, SIGUSR1);
+
+    while(running) {
+        int rc = sem_wait(&adds);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        printf("Item added to empty queue %s\n", argv[index + 1]);
+    }
+
+    shr_q_close(&q);
+}
+
+
 cmd_f cmds[] = {
     sharedq_help,
     sharedq_create,
@@ -748,7 +822,35 @@ cmd_f cmds[] = {
     sharedq_add,
     sharedq_remove,
     sharedq_drain,
+    sharedq_watch,
 };
+
+
+static void sig_usr(int signo)
+{
+    if (signo == SIGUSR1) {
+        sem_post(&adds);
+    } else if (signo == SIGUSR2) {
+        sem_post(&events);
+    } else if (signo == SIGTERM) {
+        running = 0;
+    }
+}
+
+
+static void set_signal_handlers(void)
+{
+    if (signal(SIGUSR1, sig_usr) == SIG_ERR) {
+        printf("cannot catch SIGUSR1\n");
+    }
+    if (signal(SIGUSR2, sig_usr) == SIG_ERR) {
+        printf("cannot catch SIGUSR2\n");
+    }
+    if (signal(SIGTERM, sig_usr) == SIG_ERR) {
+        printf("cannot catch SIGTERM\n");
+    }
+}
+
 
 int main(
     int argc,
@@ -771,6 +873,20 @@ int main(
         sharedq_help(argc, argv, index);
         return 0;
     }
+
+    int rc = sem_init(&adds, 0, 0);
+    if (rc < 0) {
+        printf("unable to initialize add semapahore\n");
+        return 0;
+    }
+
+    rc = sem_init(&events, 0, 1);
+    if (rc < 0) {
+        printf("unable to initialize event semapahore\n");
+        return 0;
+    }
+
+    set_signal_handlers();
 
     int length = strlen(argv[index]);
     int i;
