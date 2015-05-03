@@ -66,6 +66,7 @@ char *cmd_str[] = {
     "remove",
     "drain",
     "watch",
+    "monitor",
 };
 
 typedef enum cmd_codes {
@@ -77,6 +78,7 @@ typedef enum cmd_codes {
     REMOVE,
     DRAIN,
     WATCH,
+    MONITOR,
     CODE_MAX
 } cmd_code_e;
 
@@ -153,6 +155,7 @@ void sharedq_help_drain()
     printf("  -x\t\t\tprints output as hex dump\n");
 }
 
+
 void sharedq_help_watch()
 {
     printf("sharedq [modifiers] watch <name>\n");
@@ -161,6 +164,17 @@ void sharedq_help_watch()
     printf("  -----------\t\t---------\n");
     printf("  -h\t\t\tprints help for the specified command\n");
 }
+
+
+void sharedq_help_monitor()
+{
+    printf("sharedq [modifiers] monitor <name>\n");
+    printf("\n  --monitors queue for events\n");
+    printf("\n   modifiers\t\t effects\n");
+    printf("  -----------\t\t---------\n");
+    printf("  -h\t\t\tprints help for the specified command\n");
+}
+
 
 void sharedq_help(int argc, char *argv[], int index)
 {
@@ -173,6 +187,7 @@ void sharedq_help(int argc, char *argv[], int index)
     printf("  drain\t\t\tdrains items in queue\n");
     printf("  help\t\t\tprint list of commands\n");
     printf("  list\t\t\tlist of queues\n");
+    printf("  monitor\t\tmonitors queue for events\n");
     printf("  remove\t\tremove item from queue\n");
     printf("  watch\t\t\tlisten for add to empty queue\n");
     printf("\n   modifiers\t\t effects\n");
@@ -758,6 +773,81 @@ void sharedq_drain(int argc, char *argv[], int index)
 }
 
 
+void sharedq_monitor(int argc, char *argv[], int index)
+{
+    if ((argc - index + 1) < 3 || (argc - index + 1) > 3)
+    {
+        sharedq_help_monitor();
+        return;
+    }
+
+    modifiers_s param = parse_modifiers(argc, argv, index, "h");
+
+    if (param.help)
+    {
+        sharedq_help_monitor();
+        return;
+    }
+
+    shr_q_s *q = NULL;
+    sh_status_e status = shr_q_open(&q, argv[index + 1], SQ_READ_ONLY);
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for open function\n");
+        return;
+    }
+    if (status == SH_ERR_ACCESS) {
+        printf("sharedq:  permission error for queue name\n");
+        return;
+    }
+    if (status == SH_ERR_EXIST) {
+        printf("sharedq:  queue name does not exist\n");
+        return;
+    }
+    if (status == SH_ERR_PATH) {
+        printf("sharedq:  error in queue name path\n");
+        return;
+    }
+    if (status == SH_ERR_SYS) {
+        printf("sharedq:  system call error\n");
+        return;
+    }
+
+    shr_q_monitor(q, SIGUSR2);
+
+    while(running) {
+        int rc = sem_wait(&events);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        sq_event_e event = SQ_EVNT_NONE;
+        do {
+            event = shr_q_event(q);
+            switch(event) {
+                case SQ_EVNT_INIT :
+                    printf("Event: initial add of item to queue\n");
+                    break;
+                case SQ_EVNT_DEPTH :
+                    printf("Event: max depth reached\n");
+                    break;
+                case SQ_EVNT_LEVEL :
+                    printf("Event: depth limit reached\n");
+                    break;
+                case SQ_EVNT_TIME :
+                    printf("Event: time limit on queue reached\n");
+                    break;
+                default :
+                    break;
+            }
+        } while (event != SQ_EVNT_NONE);
+    }
+
+    shr_q_close(&q);
+}
+
+
 void sharedq_watch(int argc, char *argv[], int index)
 {
     if ((argc - index + 1) < 3 || (argc - index + 1) > 3)
@@ -823,6 +913,7 @@ cmd_f cmds[] = {
     sharedq_remove,
     sharedq_drain,
     sharedq_watch,
+    sharedq_monitor,
 };
 
 
