@@ -2332,7 +2332,7 @@ extern sq_item_s shr_q_remove_timedwait(
 
 
 /*
-    shr_q_event -- returns active event or SQ_EVENT_NONE when empty
+    shr_q_event -- returns active event or SQ_EVNT_NONE when empty
 
 */
 extern sq_event_e shr_q_event(
