@@ -2,13 +2,15 @@ SHELL = /bin/sh
 .SUFFIXES:
 .SUFFIXES: .c .o
 
-SUBDIRS		= src lib shrq_harness sharedq
+SUBDIRS		= src lib shrq_harness sharedq examples
+MKDIRS		= src lib shrq_harness sharedq
 TESTDIRS	= src
 INSTDIRS	= include lib sharedq
+EXDIRS		= examples
 
 all:
 	@set -e
-	@for i in $(SUBDIRS); \
+	@for i in $(MKDIRS); \
 	do \
 		cd $$i; \
 		$(MAKE); \
@@ -42,5 +44,13 @@ install:
 			cd ..; \
 		done
 
+examples:
+	@set -e
+	@for i in $(EXDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE); \
+		cd ..; \
+	done
 
-.PHONY: all clean check install
+.PHONY: all clean check install examples
