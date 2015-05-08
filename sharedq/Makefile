@@ -4,7 +4,7 @@ SHELL = /bin/sh
 
 CC = gcc
 EXE = sharedq
-LIB = -L../lib -lshr -lrt -lpthread
+LIB = -L../lib -static -lshr -lrt -lpthread
 
 CFLAGS = -I../include -g3 -O1 -std=gnu11 -pedantic -Wall -o $(EXE)
 
