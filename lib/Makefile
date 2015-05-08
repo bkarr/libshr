@@ -8,7 +8,8 @@ SHARED_LIB = libshr.so
 
 all: $(OBJECTS)
 	@ar -r $(LIB) $(OBJECTS)
-	gcc -shared -o $(SHARED_LIB) $(OBJECTS)
+	@gcc -shared -o $(SHARED_LIB) $(OBJECTS)
+	@chmod 0755 $(SHARED_LIB)
 
 
 clean:
@@ -20,5 +21,6 @@ clean:
 install:
 	@cp $(LIB) /usr/lib/.
 	@cp $(SHARED_LIB) /usr/lib/.
+	@ldconfig
 
 .PHONY: all clean install
