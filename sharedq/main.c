@@ -264,21 +264,21 @@ modifiers_s parse_modifiers(
             continue;
         }
         switch (param[1]) {
-            case 'b' :
-                result.block = true;
-                break;
-            case 'h' :
-                result.help = true;
-                break;
-            case 'v' :
-                result.verbose = true;
-                break;
-            case 'x' :
-                result.hex = true;
-                break;
-            default :
-                printf("unrecognized modifier or parameter\n");
-                exit(1);
+        case 'b' :
+            result.block = true;
+            break;
+        case 'h' :
+            result.help = true;
+            break;
+        case 'v' :
+            result.verbose = true;
+            break;
+        case 'x' :
+            result.hex = true;
+            break;
+        default :
+            printf("unrecognized modifier or parameter\n");
+            exit(1);
         }
     }
 
@@ -402,8 +402,8 @@ void sharedq_list(int argc, char *argv[], int index)
     }
 
     if (param.verbose) {
-        printf("\n\t queues \t\t depth \t\t size \n");
-        printf("\t--------\t\t-------\t\t------\n");
+        printf("\n\t queues \t\t  depth \t\t   size \n");
+        printf("\t--------\t\t---------\t\t----------\n");
     }
     char path[PATH_MAX];
     int offset = strlen(SHR_OBJ_DIR);
@@ -416,7 +416,7 @@ void sharedq_list(int argc, char *argv[], int index)
         if (rc == 0 && S_ISREG(st.st_mode)) {
             if (shr_q_open(&q, entry->d_name, SQ_IMMUTABLE) == SH_OK) {
                 if (param.verbose) {
-                    printf("\t%-16s\t%7li\t\t%li\n",
+                    printf("\t%-16s\t%9li\t\t %9li\n",
                         entry->d_name, shr_q_count(q), st.st_size);
                 } else {
                     printf("%s\n", entry->d_name);
@@ -826,20 +826,20 @@ void sharedq_monitor(int argc, char *argv[], int index)
         do {
             event = shr_q_event(q);
             switch(event) {
-                case SQ_EVNT_INIT :
-                    printf("Event: initial add of item to queue\n");
-                    break;
-                case SQ_EVNT_DEPTH :
-                    printf("Event: max depth reached\n");
-                    break;
-                case SQ_EVNT_LEVEL :
-                    printf("Event: depth limit reached\n");
-                    break;
-                case SQ_EVNT_TIME :
-                    printf("Event: time limit on queue reached\n");
-                    break;
-                default :
-                    break;
+            case SQ_EVNT_INIT :
+                printf("Event: initial add of item to queue\n");
+                break;
+            case SQ_EVNT_DEPTH :
+                printf("Event: max depth reached\n");
+                break;
+            case SQ_EVNT_LEVEL :
+                printf("Event: depth limit reached\n");
+                break;
+            case SQ_EVNT_TIME :
+                printf("Event: time limit on queue reached\n");
+                break;
+            default :
+                break;
             }
         } while (event != SQ_EVNT_NONE);
     }
