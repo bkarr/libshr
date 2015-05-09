@@ -2859,6 +2859,135 @@ static void test_add_errors(void)
     assert(status == SH_OK);
 }
 
+static void test_add_wait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+
+    status = shr_q_add_wait(q, "test", 4);
+    assert(status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    status = shr_q_add_wait(q, "test", 4);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_add_wait(q, "test", 4);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_add_wait(tq, NULL, 4);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_add_wait(tq, "test", 0);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+static void test_add_timedwait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    struct timespec ts = {0};
+
+    status = shr_q_add_timedwait(q, "test", 4, &ts);
+    assert(status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    status = shr_q_add_timedwait(q, "test", 4, &ts);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_add_timedwait(q, "test", 4, &ts);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_add_timedwait(tq, NULL, 4, &ts);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_add_timedwait(tq, "test", 0, &ts);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_add_timedwait(tq, "test", 4, NULL);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+static void test_remove_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    sq_item_s item;
+
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove(tq, NULL, &item.buf_size);
+    assert(item.status == SH_ERR_ARG);
+    item = shr_q_remove(q, &item.buffer, NULL);
+    assert(item.status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+static void test_remove_wait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    sq_item_s item;
+
+    item = shr_q_remove_wait(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    item = shr_q_remove_wait(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove_wait(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove_wait(tq, NULL, &item.buf_size);
+    assert(item.status == SH_ERR_ARG);
+    item = shr_q_remove_wait(q, &item.buffer, NULL);
+    assert(item.status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
 static void test_empty_queue(void)
 {
     sh_status_e status;
@@ -2942,6 +3071,10 @@ int main(void)
     test_free_data_slots();
     test_large_data_allocation();
     test_add_errors();
+    test_add_wait_errors();
+    test_add_timedwait_errors();
+    test_remove_errors();
+    test_remove_wait_errors();
 
     // set up to test open and close
     shr_q_s *q;
