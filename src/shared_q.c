@@ -3056,6 +3056,63 @@ static void test_single_item_queue(void)
     assert(q == NULL);
 }
 
+static void test_multi_item_queue(void)
+{
+    sh_status_e status;
+    sq_item_s item = {0};
+    shr_q_s *q = NULL;
+
+    adds = 0;
+    events = 0;
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 2, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    assert(shr_q_listen(q, SIGUSR1) == SH_OK);
+    assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
+    assert(shr_q_add(q, "test1", 5) == SH_OK);
+    assert(shr_q_count(q) == 1);
+    assert(shr_q_event(q) == SQ_EVNT_INIT);
+    assert(shr_q_add(q, "test2", 5) == SH_OK);
+    assert(shr_q_count(q) == 2);
+    assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
+    assert(shr_q_event(q) == SQ_EVNT_DEPTH);
+    assert(shr_q_count(q) == 2);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test1", item.length) == 0);
+    assert(shr_q_count(q) == 1);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test2", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    assert(shr_q_add(q, "test3", 5) == SH_OK);
+    assert(shr_q_count(q) == 1);
+    assert(shr_q_event(q) == SQ_EVNT_NONE);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test3", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    free(item.buffer);
+    assert(events == 2);
+    assert(adds == 2);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
 int main(void)
 {
     set_signal_handlers();
@@ -3091,6 +3148,7 @@ int main(void)
     */
     test_empty_queue();
     test_single_item_queue();
+    test_multi_item_queue();
 
     return 0;
 }
