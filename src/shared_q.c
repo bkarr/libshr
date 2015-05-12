@@ -483,21 +483,32 @@ static int64_t calculate_realloc_size(
     return (current_pages + exp_pages) * PAGE_SIZE;
 }
 
+/*
+    resize_extent -- resize current mapped extent to match shared memory
+    object size
 
+    returns view_s where view.status:
+
+    SH_OK           if view reflects latest state of current queue extent
+    SH_ERR_NOMEM    if not enough memory to resize extent to match shared memory
+*/
 static view_s resize_extent(
     shr_q_s *q,         // pointer to queue struct -- not NULL
-    extent_s *extent    // pointer to current extent -- not NULL
+    extent_s *extent    // pointer to working extent -- not NULL
 )   {
     view_s view = {.status = SH_OK, .extent = q->current};
-    int64_t *array = view.extent->array;
+    // did another thread change current extent?
     if (extent != view.extent) {
         return view;
     }
 
+    // did another process change size of shared object?
+    int64_t *array = view.extent->array;
     if (extent->slots == array[SIZE]) {
         return view;
     }
 
+    // allocate next extent
     extent_s *next = calloc(1, sizeof(extent_s));
     if (next == NULL) {
         view.status = SH_ERR_NOMEM;
@@ -516,7 +527,7 @@ static view_s resize_extent(
         return view;
     }
 
-    // add to end of list of extents
+    // update current queue extent
     extent_s *tail = view.extent;
     if (CAS((intptr_t*)&tail->next, (intptr_t)NULL, (intptr_t)next)) {
         CAS((intptr_t*)&q->current, (intptr_t)tail, (intptr_t)next);
