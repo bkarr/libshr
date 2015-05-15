@@ -58,7 +58,7 @@ THE SOFTWARE.
   } while (0)
 
 #define AAF __sync_add_and_fetch
-#define VALUE_SIZE 32
+#define DEFAULT_SIZE 32
 #define QNAME "testq"
 
 typedef struct proc_item pitem_t;
@@ -79,6 +79,7 @@ static volatile unsigned long count1 = 0;
 static volatile unsigned long count2 = 0;
 static shr_q_s *queue;
 static int waiting = 0;
+static int64_t msg_size = DEFAULT_SIZE;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -128,14 +129,14 @@ void *validate_producer(
     assert(status == SH_OK);
 #endif
     assert(wait() == 0);
-    ptr = (unsigned long *)malloc(VALUE_SIZE);
+    ptr = (unsigned long *)malloc(msg_size);
     for (i = 0; i < iterations; ++i) {
         assert(ptr);
         //printf("add %lx\n", (uint64_t)ptr);
         *ptr = AAF(&input, 1);
         //printf("%li\n", *ptr);
         total += *ptr;
-        while (shr_q_add(q, (void *)ptr, VALUE_SIZE) != SH_OK)
+        while (shr_q_add(q, (void *)ptr, msg_size) != SH_OK)
             printf("add failed\n");
     }
     free(ptr);
@@ -284,8 +285,8 @@ int main(
 
     (void)remove("/dev/shm/testq");
 
-    if (argc != 4) {
-        fprintf(stderr, "%s: <ncpus> <nthreads> <iterations>\n",
+    if (argc < 4 || argc > 5) {
+        fprintf(stderr, "%s: <ncpus> <nthreads> <iterations> [<size>]\n",
                 argv[0]);
         return 1;
     }
@@ -296,6 +297,9 @@ int main(
     verif = 0;
     sys_cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
 
+    if (argc == 5) {
+        msg_size = parse_arg_to_long(argv[4], 4);
+    }
     iterations = parse_arg_to_long(argv[3], 3);
     thread_count = parse_arg_to_long(argv[2], 2);
     cpu_count = parse_arg_to_long(argv[1], 1);
