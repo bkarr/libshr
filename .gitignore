@@ -36,6 +36,7 @@ tags
 test_shrq
 sharedq/sharedq
 shrq_harness/shrq_harness
+cppconnect
 
 # Packages #
 ############
