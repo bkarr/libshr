@@ -68,6 +68,7 @@ char *cmd_str[] = {
     "watch",
     "monitor",
     "level",
+    "limit",
 };
 
 typedef enum cmd_codes {
@@ -81,6 +82,7 @@ typedef enum cmd_codes {
     WATCH,
     MONITOR,
     LEVEL,
+    LIMIT,
     CODE_MAX
 } cmd_code_e;
 
@@ -191,6 +193,20 @@ void sharedq_help_level()
 }
 
 
+void sharedq_help_limit()
+{
+    printf("sharedq [modifiers] limit <name> <seconds> [<nanoseconds>]\n");
+    printf("\n  --sets limit for monitor timelimit event\n");
+    printf("\n  where:\n");
+    printf("  <name>\t\tname of queue\n");
+    printf("  <seconds>\t\tseconds till time limit event will be generated\n");
+    printf("  <nanoseconds>\t\tnanoseconds till time limit event will be generated\n");
+    printf("\n   modifiers\t\t effects\n");
+    printf("  -----------\t\t---------\n");
+    printf("  -h\t\t\tprints help for the specified command\n");
+}
+
+
 void sharedq_help(int argc, char *argv[], int index)
 {
     printf("sharedq [modifiers] <cmd>\n");
@@ -202,6 +218,7 @@ void sharedq_help(int argc, char *argv[], int index)
     printf("  drain\t\t\tdrains items in queue\n");
     printf("  help\t\t\tprint list of commands\n");
     printf("  level\t\t\tset event depth level\n");
+    printf("  limit\t\t\tset limit for timelimit event\n");
     printf("  list\t\t\tlist of queues\n");
     printf("  monitor\t\tmonitors queue for events\n");
     printf("  remove\t\tremove item from queue\n");
@@ -973,6 +990,67 @@ void sharedq_level(int argc, char *argv[], int index)
 }
 
 
+void sharedq_limit(int argc, char *argv[], int index)
+{
+    if ((argc - index + 1) < 4 || (argc - index + 1) > 5)
+    {
+        sharedq_help_limit();
+        return;
+    }
+
+    modifiers_s param = parse_modifiers(argc, argv, index, "h");
+
+    if (param.help)
+    {
+        sharedq_help_limit();
+        return;
+    }
+
+    int64_t nano = 0;
+    if ((argc - index + 1) == 5) {
+        nano = sharedq_atol(argv[index + 3], strlen(argv[index + 3]));
+        if (nano < 0) {
+            printf("sharedq:  invalid queue nanosecond timelimit argument\n");
+            return;
+        }
+    }
+    int64_t sec = 0;
+    if ((argc - index + 1) >= 4) {
+        sec = sharedq_atol(argv[index + 2], strlen(argv[index + 2]));
+        if (sec < 0) {
+            printf("sharedq:  invalid queue seconds timelimit argument\n");
+            return;
+        }
+    }
+    shr_q_s *q = NULL;
+    sh_status_e status = shr_q_open(&q, argv[index + 1], SQ_READ_ONLY);
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for open function\n");
+        return;
+    }
+    if (status == SH_ERR_ACCESS) {
+        printf("sharedq:  permission error for queue name\n");
+        return;
+    }
+    if (status == SH_ERR_EXIST) {
+        printf("sharedq:  queue name does not exist\n");
+        return;
+    }
+    if (status == SH_ERR_PATH) {
+        printf("sharedq:  error in queue name path\n");
+        return;
+    }
+    if (status == SH_ERR_SYS) {
+        printf("sharedq:  system call error\n");
+        return;
+    }
+
+    shr_q_timelimit(q, sec, nano);
+
+    shr_q_close(&q);
+}
+
+
 cmd_f cmds[] = {
     sharedq_help,
     sharedq_create,
@@ -984,6 +1062,7 @@ cmd_f cmds[] = {
     sharedq_watch,
     sharedq_monitor,
     sharedq_level,
+    sharedq_limit,
 };
 
 
