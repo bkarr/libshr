@@ -85,7 +85,7 @@ typedef enum
     SQ_EVNT_INIT,           // first item added to queue
     SQ_EVNT_DEPTH,          // max depth reached
     SQ_EVNT_TIME,           // max time limit reached
-    SQ_EVNT_LEVEL,          // depth level reached
+    SQ_EVNT_LEVEL           // depth level reached
 } sq_event_e;
 
 typedef enum
