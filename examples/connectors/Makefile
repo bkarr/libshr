@@ -1,6 +1,6 @@
 SHELL = /bin/sh
 
-SUBDIRS		= cpp
+SUBDIRS		= cpp d
 
 all:
 	@set -e
