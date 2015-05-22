@@ -150,4 +150,5 @@ Performance/stress test:
 For right now, unit tests, multi-threaded test harness, and the command line
 utility all provide working examples of how to use the library.
 
-More working examples are planned.
+There are also examples in C++ and D languages in the examples subdirectory.  The D language examples use the dmd compiler version 2.067.1.  To build the
+examples simply enter 'make examples' on the command line in the libshr directory.
