@@ -38,6 +38,8 @@ sharedq/sharedq
 shrq_harness/shrq_harness
 cppconnect
 dconnect
+cppsplitter
+dsplitter
 
 # Packages #
 ############
