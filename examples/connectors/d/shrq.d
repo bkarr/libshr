@@ -20,8 +20,8 @@ enum
 }
 alias int sh_status_e;
 
-sh_status_e  shr_q_create(shr_q_s **q, char *name, uint max_depth, sq_mode_e mode);
-sh_status_e shr_q_open(shr_q_s **q, char *name, sq_mode_e mode);
+sh_status_e  shr_q_create(shr_q_s **q, immutable(char) *name, uint max_depth, sq_mode_e mode);
+sh_status_e shr_q_open(shr_q_s **q, immutable(char) *name, sq_mode_e mode);
 sh_status_e  shr_q_add(shr_q_s *q, void *value, long length);
 sq_item_s  shr_q_remove_wait(shr_q_s *q, void **buffer, long *buff_size);
 char * shr_q_explain(sh_status_e status);

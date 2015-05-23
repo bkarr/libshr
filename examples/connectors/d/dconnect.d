@@ -16,13 +16,10 @@ void main(string args[])
     shr_q_s *in_q = null;
     shr_q_s *out_q = null;
 
-    char[256] qname;
-    memcpy(&qname[0], args[1].toStringz(), args[1].length);
-    qname[args[1].length] = '\0';
 
-    sh_status_e status = shr_q_open(&in_q, cast(char*)qname, SQ_READ_ONLY);
+    sh_status_e status = shr_q_open(&in_q, args[1].toStringz(), SQ_READ_ONLY);
     if (status == SH_ERR_EXIST) {
-        status = shr_q_create(&in_q, cast(char*)qname, 0, SQ_READ_ONLY);
+        status = shr_q_create(&in_q, args[1].toStringz(), 0, SQ_READ_ONLY);
         if (status) {
             writefln("error input queue:  %s\n", fromStringz(shr_q_explain(status)));
             return;
@@ -33,11 +30,9 @@ void main(string args[])
     }
 
     if (args.length == 3) {
-        memcpy(&qname[0], args[2].toStringz(), args[2].length);
-        qname[args[2].length] = '\0';
-        status = shr_q_open(&out_q, cast(char*)qname, SQ_WRITE_ONLY);
+        status = shr_q_open(&out_q, args[2].toStringz(), SQ_WRITE_ONLY);
         if (status == SH_ERR_EXIST) {
-            status = shr_q_create(&out_q, cast(char*)qname, 0, SQ_WRITE_ONLY);
+            status = shr_q_create(&out_q, args[2].toStringz(), 0, SQ_WRITE_ONLY);
             if (status) {
                 writefln("error output queue:  %s\n", fromStringz(shr_q_explain(status)));
                 return;
