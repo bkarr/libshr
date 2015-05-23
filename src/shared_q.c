@@ -387,7 +387,7 @@ static sh_status_e init_queue(
 
 static sh_status_e create_named_queue(
     shr_q_s **q,            // address of q struct pointer -- not NULL
-    char *name,             // name of q as null terminated string, or NULL
+    char const * const name,// name of q as a null terminated string -- not NULL
     uint32_t max_depth,     // max depth allowed at which add is blocked
     sq_mode_e mode          // read/write mode
 )   {
@@ -1619,7 +1619,7 @@ static void check_level(
 */
 extern sh_status_e shr_q_create(
     shr_q_s **q,            // address of q struct pointer -- not NULL
-    char *name,             // name of q as null terminated string -- not NULL
+    char const * const name,// name of q as a null terminated string -- not NULL
     uint32_t max_depth,     // max depth allowed at which add is blocked
     sq_mode_e mode          // read/write mode
 )   {
@@ -1658,9 +1658,9 @@ extern sh_status_e shr_q_create(
     SH_ERR_SYS      if system call returns an error
 */
 extern sh_status_e shr_q_open(
-    shr_q_s **q,        // address of q struct pointer -- not NULL
-    char *name,         // name of q as a null terminated string, or NULL
-    sq_mode_e mode      // read/write mode
+    shr_q_s **q,            // address of q struct pointer -- not NULL
+    char const * const name,// name of q as a null terminated string -- not NULL
+    sq_mode_e mode          // read/write mode
 )   {
     if (q == NULL || name == NULL) {
         return SH_ERR_ARG;

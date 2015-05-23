@@ -141,7 +141,7 @@ typedef struct sq_item
 */
 extern sh_status_e shr_q_create(
     shr_q_s **q,            // address of q struct pointer -- not NULL
-    char *name,             // name of q, null terminated string -- not NULL
+    char const * const name,// name of q as a null terminated string -- not NULL
     uint32_t max_depth,     // max depth allowed at which add of item is blocked
     sq_mode_e mode          // read/write mode
 );
@@ -164,9 +164,9 @@ extern sh_status_e shr_q_create(
     SH_ERR_SYS      if system call returns an error
 */
 extern sh_status_e shr_q_open(
-    shr_q_s **q,        // address of q struct pointer -- not NULL
-    char *name,         // name of q as a null terminated string -- not NULL
-    sq_mode_e mode      // read/write mode
+    shr_q_s **q,            // address of q struct pointer -- not NULL
+    char const * const name,// name of q as a null terminated string -- not NULL
+    sq_mode_e mode          // read/write mode
 );
 
 
