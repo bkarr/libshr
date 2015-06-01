@@ -1,6 +1,6 @@
 SHELL = /bin/sh
 
-SUBDIRS		= connectors
+SUBDIRS		= connectors splitters
 
 all:
 	@set -e
