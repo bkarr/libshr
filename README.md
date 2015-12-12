@@ -1,9 +1,11 @@
 # libshr
 
+<!---
 <a href="https://scan.coverity.com/projects/4816">
   <img alt="Coverity Scan Build Status"
        src="https://scan.coverity.com/projects/4816/badge.svg"/>
 </a>
+-->
 
 Version: 0.2.1
 
