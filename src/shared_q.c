@@ -31,6 +31,7 @@ THE SOFTWARE.
 #include <limits.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,7 +119,7 @@ typedef struct idx_ref
             uint8_t bits;
             int32_t byte;
         };
-        int64_t diff;
+        uint64_t diff;
     };
 } idx_ref_s;
 
@@ -181,15 +182,18 @@ struct shr_q
     char *name;
     extent_s *prev;
     extent_s *current;
+#ifdef __STDC_NO_ATOMICS__
     int64_t accessors;
+#else
+    atomic_long accessors;
+#endif
 };
 
 
-typedef struct dword {
+typedef struct {
     uint64_t low;
     uint64_t high;
 } DWORD;
-
 
 static char *status_str[] = {
     "success",
@@ -207,6 +211,7 @@ static char *status_str[] = {
     "invalid status code for explain"
 };
 
+static void *null = NULL;
 
 static sh_status_e free_data_gap(shr_q_s *q, int64_t slot, int64_t count);
 static view_s insure_in_range(shr_q_s *q, int64_t slot);
@@ -218,6 +223,7 @@ static view_s insure_in_range(shr_q_s *q, int64_t slot);
 ==============================================================================*/
 
 
+#ifdef __STDC_NO_ATOMICS__
 /*
     AFS64 -- atomic fetch and subtract 64-bit
 */
@@ -254,9 +260,10 @@ static inline int64_t AFA64(
 */
 static inline char CAS(
     volatile intptr_t *mem,
-    intptr_t old, intptr_t new
+    intptr_t *old,
+    intptr_t new
 )   {
-    int32_t old_h = old >> 32, old_l = (int32_t)old;
+    int32_t old_h = *old >> 32, old_l = (int32_t)*old;
     int32_t new_h = new >> 32, new_l = (int32_t)new;
 
     char r = 0;
@@ -281,10 +288,10 @@ static inline char CAS(
 static inline char DWCAS(
     volatile DWORD *mem,
     DWORD *old,
-    DWORD *new
+    DWORD new
 )   {
     uint64_t  old_h = old->high, old_l = old->low;
-    uint64_t  new_h = new->high, new_l = new->low;
+    uint64_t  new_h = new.high, new_l = new.low;
 
     char r = 0;
     __asm__ __volatile__("lock; cmpxchg16b (%6);"
@@ -300,6 +307,17 @@ static inline char DWCAS(
     : "cc", "memory");
     return r;
 }
+
+
+#else
+
+#define AFS64(mem, v) atomic_fetch_sub_explicit(mem, v, memory_order_relaxed)
+#define AFA64(mem, v) atomic_fetch_add_explicit(mem, v, memory_order_relaxed)
+#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new, memory_order_relaxed, memory_order_relaxed)
+#define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new, memory_order_relaxed, memory_order_relaxed)
+//#define DWCAS(val, old, new) __atomic_compare_exchange(val, old, new, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)
+
+#endif
 
 
 static sh_status_e convert_to_status(
@@ -444,26 +462,26 @@ static void add_end(
     DWORD tail_after;
     int64_t next;
     view_s view = {.extent = q->current};
-    int64_t *array = view.extent->array;
+    atomic_long *array = (atomic_long*)view.extent->array;
 
     array[slot] = slot;
     next_after.low = slot;
 
     while(true) {
-        tail_before.high = array[tail + 1];
-        next = array[tail];
-        tail_before.low = next;
+        tail_before = *((DWORD*)&array[tail]);
+        next = tail_before.low;
         array[slot + 1] = tail_before.high + 1;
         next_after.high = tail_before.high + 1;
         view = insure_in_range(q, next);
-        array = view.extent->array;
-        if (DWCAS((DWORD*)&array[next], &tail_before, &next_after)) {
-            DWCAS((DWORD*)&array[tail], &tail_before, &next_after);
-            break;
+        array = (atomic_long*)view.extent->array;
+        if (tail_before.low == array[next]) {
+            if (DWCAS((DWORD*)&array[next], &tail_before, next_after)) {
+                DWCAS((DWORD*)&array[tail], &tail_before, next_after);
+                break;
+            }
         } else {
-            tail_after.high = tail_before.high + 1;
-            tail_after.low = array[next];
-            DWCAS((DWORD*)&array[tail], &tail_before, &tail_after);
+            tail_after = *((DWORD*)&array[next]);
+            DWCAS((DWORD*)&array[tail], &tail_before, tail_after);
         }
     }
 }
@@ -529,10 +547,10 @@ static view_s resize_extent(
 
     // update current queue extent
     extent_s *tail = view.extent;
-    if (CAS((intptr_t*)&tail->next, (intptr_t)NULL, (intptr_t)next)) {
-        CAS((intptr_t*)&q->current, (intptr_t)tail, (intptr_t)next);
+    if (CAS((intptr_t*)&tail->next, (intptr_t*)&null, (intptr_t)next)) {
+        CAS((intptr_t*)&q->current, (intptr_t*)&tail, (intptr_t)next);
     } else {
-        CAS((intptr_t*)&q->current, (intptr_t)tail, (intptr_t)tail->next);
+        CAS((intptr_t*)&q->current, (intptr_t*)&tail, (intptr_t)tail->next);
         munmap(next->array, next->size);
         free(next);
     }
@@ -548,7 +566,7 @@ static view_s expand(
     int64_t slots       // number of slots to allocate
 )   {
     view_s view = {.status = SH_OK, .extent = extent};
-    int64_t *array = extent->array;
+    atomic_long *array = (atomic_long*)extent->array;
     int64_t size = calculate_realloc_size(extent, slots);
     DWORD before;
     DWORD after;
@@ -596,7 +614,7 @@ static view_s expand(
                 } else {
                     after.low = extent->slots;
                 }
-            } while (!DWCAS((DWORD*)&array[NODE_ALLOC], &before, &after));
+            } while (!DWCAS((DWORD*)&array[NODE_ALLOC], &before, after));
 
             if (before.low != after.low && before.high - before.low >= 2) {
                 free_data_gap(q, before.low, before.high - before.low);
@@ -654,7 +672,7 @@ static int64_t remove_front(
         before.high = gen;
         after.high = before.high + 1;
         before.low = (uint64_t)ref;
-        if (DWCAS((DWORD*)&array[head], &before, &after)) {
+        if (DWCAS((DWORD*)&array[head], &before, after)) {
             memset(&array[ref], 0, 2 << 3);
             return ref;
         }
@@ -703,7 +721,7 @@ static view_s alloc_node_slots(
             before.high = data_alloc;
             after.low = alloc_end;
             after.high = data_alloc;
-            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, &after)) {
+            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, after)) {
                 memset(array+node_alloc, 0, slots << 3);
                 view.slot = node_alloc;
                 return view;
@@ -780,7 +798,7 @@ static sh_status_e add_idx_gap(
     DWORD before = {0, 0};
     DWORD after = { .low = node, .high = 0};
 
-    if (!DWCAS((DWORD*)ref, &before, &after)) {
+    if (!DWCAS((DWORD*)ref, &before, after)) {
         add_end(q, node, FREE_TAIL);
         return SH_RETRY;
     }
@@ -810,7 +828,7 @@ static sh_status_e add_to_leaf(
         before.low = array[slot];
         after.high = before.high + 1;
         after.low = slot;
-    } while (!DWCAS((DWORD*)&leaf->allocs, &before, &after));
+    } while (!DWCAS((DWORD*)&leaf->allocs, &before, after));
 
     return SH_OK;
 }
@@ -920,7 +938,7 @@ static sh_status_e insert_idx_gap(
     ref->byte = byte;
     ref->bits = bits;
     ref->flag = -1;
-    if (!DWCAS((DWORD*)parent, &before, &after)) {
+    if (!DWCAS((DWORD*)parent, &before, after)) {
         return SH_RETRY;
     }
     return SH_OK;
@@ -995,7 +1013,7 @@ static sh_status_e add_idx_node(
     DWORD before = {0, 0};
     DWORD after = { .low = node, .high = 0};
 
-    if (!DWCAS((DWORD*)ref, &before, &after)) {
+    if (!DWCAS((DWORD*)ref, &before, after)) {
         add_end(q, node, FREE_TAIL);
         return SH_RETRY;
     }
@@ -1076,7 +1094,7 @@ static sh_status_e insert_idx_node(
     ref->byte = byte;
     ref->bits = bits;
     ref->flag = -1;
-    if (!DWCAS((DWORD*)parent, &before, &after)) {
+    if (!DWCAS((DWORD*)parent, &before, after)) {
         add_end(q, leaf_index, FREE_TAIL);
         add_end(q, node_index, FREE_TAIL);
         return SH_RETRY;
@@ -1162,7 +1180,7 @@ static int64_t lookup_freed_data(
         array = view.extent->array;
         after.low = array[before.low];
         after.high = before.high + 1;
-    } while (before.low != 0 && !DWCAS((DWORD*)&leaf->allocs, &before, &after));
+    } while (before.low != 0 && !DWCAS((DWORD*)&leaf->allocs, &before, after));
     return before.low;
 }
 
@@ -1201,7 +1219,7 @@ static view_s alloc_data_slots(
             before.high = data_alloc;
             after.low = node_alloc;
             after.high = alloc_start;
-            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, &after)) {
+            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, after)) {
                 view.slot = alloc_start;
                 return view;
             }
@@ -1273,7 +1291,7 @@ static void release_prev_extents(
             break;
         }
         next = head->next;
-        if (!CAS((intptr_t*)&q->prev, (intptr_t)head, (intptr_t)next)) {
+        if (!CAS((intptr_t*)&q->prev, (intptr_t*)&head, (intptr_t)next)) {
             break;
         }
         munmap(head->array, head->size);
@@ -1355,10 +1373,12 @@ static sh_status_e enq(
     }
     extent_s *extent = q->current;
     int64_t *array = extent->array;
-    struct timespec curr_time;
-    curr_time.tv_sec = array[data_slot + TM_SEC];
-    curr_time.tv_nsec = array[data_slot + TM_NSEC];
-
+    // struct timespec curr_time;
+    // curr_time.tv_sec = array[data_slot + TM_SEC];
+    // curr_time.tv_nsec = array[data_slot + TM_NSEC];
+    DWORD curr_time;
+    curr_time.high = array[data_slot + TM_SEC];
+    curr_time.low = array[data_slot + TM_NSEC];
 
     // allocate queue node
     view_s view = alloc_node_slots(q);
@@ -1382,7 +1402,7 @@ static sh_status_e enq(
     signal_arrival(q);
 
     struct timespec prev_time = *(struct timespec*)&array[TS_SEC];
-    DWCAS((DWORD*)&array[TS_SEC], (DWORD*)&prev_time, (DWORD*)&curr_time);
+    DWCAS((DWORD*)&array[TS_SEC], (DWORD*)&prev_time, curr_time);
 
     release_prev_extents(q);
 
@@ -1558,7 +1578,7 @@ static void check_level(
         return;
     }
 
-    if (!CAS(&array[LEVEL], level, 0)) {
+    if (!CAS(&array[LEVEL], &level, 0)) {
         (void)AFS64(&q->accessors, 1);
         return;
     }
@@ -1876,14 +1896,14 @@ extern sh_status_e shr_q_monitor(
     }
     (void)AFA64(&q->accessors, 1);
 
-    int pid = getpid();
+    int64_t pid = getpid();
     if (signal == 0) {
         if (pid != q->current->array[NOTIFY_PID]) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_STATE;
         }
 
-        if (CAS(&q->current->array[NOTIFY_PID], pid, 0)) {
+        if (CAS(&q->current->array[NOTIFY_PID], &pid, 0)) {
             q->current->array[NOTIFY_SIGNAL] = signal;
             (void)AFS64(&q->accessors, 1);
             return SH_OK;
@@ -1893,7 +1913,7 @@ extern sh_status_e shr_q_monitor(
     }
 
     int64_t prev = q->current->array[NOTIFY_PID];
-    if (CAS(&q->current->array[NOTIFY_PID], prev, pid)) {
+    if (CAS(&q->current->array[NOTIFY_PID], &prev, pid)) {
         q->current->array[NOTIFY_SIGNAL] = signal;
         (void)AFS64(&q->accessors, 1);
         return SH_OK;
@@ -1929,14 +1949,14 @@ extern sh_status_e shr_q_listen(
     }
     (void)AFA64(&q->accessors, 1);
 
-    int pid = getpid();
+    int64_t pid = getpid();
     if (signal == 0) {
         if (pid != q->current->array[LISTEN_PID]) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_STATE;
         }
 
-        if (CAS(&q->current->array[LISTEN_PID], pid, 0)) {
+        if (CAS(&q->current->array[LISTEN_PID], &pid, 0)) {
             q->current->array[LISTEN_SIGNAL] = signal;
             (void)AFS64(&q->accessors, 1);
             return SH_OK;
@@ -1946,7 +1966,7 @@ extern sh_status_e shr_q_listen(
     }
 
     int64_t prev = q->current->array[LISTEN_PID];
-    if (CAS(&q->current->array[LISTEN_PID], prev, pid)) {
+    if (CAS(&q->current->array[LISTEN_PID], &prev, pid)) {
         q->current->array[LISTEN_SIGNAL] = signal;
         (void)AFS64(&q->accessors, 1);
         return SH_OK;
@@ -2475,7 +2495,7 @@ extern sh_status_e shr_q_level(
     extent_s *extent = q->current;
     int64_t *array = extent->array;
     int64_t prev = array[LEVEL];
-    CAS(&array[LEVEL], prev, level);
+    CAS(&array[LEVEL], &prev, level);
 
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
@@ -2504,13 +2524,13 @@ extern sh_status_e shr_q_timelimit(
 
     int64_t *array = q->current->array;
     struct timespec prev;
-    struct timespec next;
-    next.tv_sec = seconds;
-    next.tv_nsec = nanoseconds;
+    DWORD next;
+    next.high = seconds;
+    next.low = nanoseconds;
     do {
         prev.tv_sec = array[LIMIT_SEC];
         prev.tv_nsec = array[LIMIT_NSEC];
-    } while (!DWCAS((DWORD*)&array[LIMIT_SEC], (DWORD*)&prev, (DWORD*)&next));
+    } while (!DWCAS((DWORD*)&array[LIMIT_SEC], (DWORD*)&prev, next));
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
 
