@@ -5,7 +5,7 @@
        src="https://scan.coverity.com/projects/4816/badge.svg"/>
 </a>
 
-Version: 0.1.1
+Version: 0.2.1
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -38,7 +38,7 @@ accessed safely by using a shared token passed between processes
 ***
 
 ## Dependencies
-- compiler that supports C11 (gcc or clang)
+- compiler that supports C11 standard atomics (gcc 4.9.3)
 - x86_64 CPU architecture (little endian integers and cmpxchg16b instruction)
 
 ## Build
@@ -57,13 +57,14 @@ Performance/stress test:
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
     input SUM[0..100000]=5000050000 output=5000050000
     time:  0.0762
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 550000
-    input SUM[0..2200000]=2420001100000 output=2420001100000
-    time:  0.9936
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 630000
+    input SUM[0..2520000]=3175201260000 output=3175201260000
+    time:  0.9981
+
 
 
  Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the
- harness can write to and read from the queue at a rate of 2.2 million items
+ harness can write to and read from the queue at a rate of 2.5 million items
  per second.
 
 ## Install
