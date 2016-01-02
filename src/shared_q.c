@@ -2421,8 +2421,8 @@ extern char *shr_q_explain(
 */
 extern bool shr_q_exceeds_idle_time(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
-    int64_t lim_secs,           // time limit in seconds
-    int64_t lim_nsecs           // time limie in nanoseconds
+    time_t lim_secs,            // time limit in seconds
+    long lim_nsecs              // time limie in nanoseconds
 )   {
     if (q == NULL) {
         return false;
@@ -2514,8 +2514,8 @@ extern sh_status_e shr_q_level(
 */
 extern sh_status_e shr_q_timelimit(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
-    int64_t seconds,            // number of seconds till event
-    int64_t nanoseconds         // number of nanoseconds till event
+    time_t seconds,             // number of seconds till event
+    long nanoseconds            // number of nanoseconds till event
 )   {
     if (q == NULL) {
         return SH_ERR_ARG;
