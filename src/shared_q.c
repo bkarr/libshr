@@ -1558,35 +1558,29 @@ static sq_event_e next_event(
 static void check_level(
     shr_q_s *q          // pointer to queue
 )   {
-    (void)AFA64(&q->accessors, 1);
     view_s view = {.extent = q->current};
     int64_t *array = view.extent->array;
 
     int64_t level = array[LEVEL];
     if (level <= 0) {
-        (void)AFS64(&q->accessors, 1);
         return;
     }
 
     int sval = 0;
     if (sem_getvalue((sem_t*)&q->current->array[READ_SEM], &sval) < 0) {
-        (void)AFS64(&q->accessors, 1);
         return;
     }
     if (sval < level) {
-        (void)AFS64(&q->accessors, 1);
         return;
     }
 
     if (!CAS(&array[LEVEL], &level, 0)) {
-        (void)AFS64(&q->accessors, 1);
         return;
     }
 
     // allocate queue node
     view = alloc_node_slots(q);
     if (view.slot == 0) {
-        (void)AFS64(&q->accessors, 1);
         return;
     }
     array = view.extent->array;
@@ -1598,8 +1592,6 @@ static void check_level(
     add_end(q, node, EVENT_TAIL);
 
     signal_event(q);
-
-    (void)AFS64(&q->accessors, 1);
 
     return;
 }
