@@ -2021,6 +2021,7 @@ extern sh_status_e shr_q_add(
     while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             status = SH_ERR_STATE;
+            (void)AFS64(&q->accessors, 1);
             return status;
         }
     }
