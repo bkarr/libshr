@@ -102,8 +102,10 @@ enum shr_q_disp
     READ_SEM,                       // read semaphore
     WRITE_SEM = (READ_SEM + 4),     // write semaphore
     IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
-    AVAIL = (IO_SEM +4),            // next avail free slot
-    HDR_END = (AVAIL + 22),         // end of queue header
+    CALL_PID = (IO_SEM +4),         // demand call notification process id
+    CALL_SIGNAL,                    // demand call notification signal
+    AVAIL,                          // next avail free slot
+    HDR_END = (AVAIL + 20),         // end of queue header
 };
 
 
@@ -1330,6 +1332,18 @@ static void signal_event(
 }
 
 
+static void signal_call(
+    shr_q_s *q
+)   {
+    if (q->current->array[CALL_PID] == 0 ||
+        q->current->array[CALL_SIGNAL] == 0) {
+        return;
+    }
+
+    (void)kill(q->current->array[CALL_PID], q->current->array[CALL_SIGNAL]);
+}
+
+
 static void add_event(
     shr_q_s *q,
     sq_event_e event
@@ -1934,7 +1948,7 @@ extern sh_status_e shr_q_monitor(
 */
 extern sh_status_e shr_q_listen(
     shr_q_s *q,         // pointer to queue struct
-    int signal          // signal to use for event notification
+    int signal          // signal to use for item arrival notification
 )   {
     if (q == NULL || signal < 0) {
         return SH_ERR_ARG;
@@ -1960,6 +1974,59 @@ extern sh_status_e shr_q_listen(
     int64_t prev = q->current->array[LISTEN_PID];
     if (CAS(&q->current->array[LISTEN_PID], &prev, pid)) {
         q->current->array[LISTEN_SIGNAL] = signal;
+        (void)AFS64(&q->accessors, 1);
+        return SH_OK;
+    }
+
+    (void)AFS64(&q->accessors, 1);
+    return SH_ERR_STATE;
+}
+
+
+/*
+    shr_q_call -- registers calling process for notification when queue removes
+                  will block because queue is empty
+
+    Any non-zero value registers calling process for notification  using the
+    specified signal when a call blocks on remove from queue.  A value of zero
+    unregisters the process if it is currently registered.  Only a single
+    process can be registered for event notifications.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to queue struct is NULL, or if signal not greater
+                    than or equal to zero, or signal not in valid range
+    SH_ERR_STATE    if unable to add pid, or unregistering and pid does not match
+*/
+extern sh_status_e shr_q_call(
+    shr_q_s *q,         // pointer to queue struct
+    int signal          // signal to use for queue empty notification
+)   {
+    if (q == NULL || signal < 0) {
+        return SH_ERR_ARG;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t pid = getpid();
+    if (signal == 0) {
+        if (pid != q->current->array[CALL_PID]) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+
+        if (CAS(&q->current->array[CALL_PID], &pid, 0)) {
+            q->current->array[NOTIFY_SIGNAL] = signal;
+            (void)AFS64(&q->accessors, 1);
+            return SH_OK;
+        }
+        (void)AFS64(&q->accessors, 1);
+        return SH_ERR_STATE;
+    }
+
+    int64_t prev = q->current->array[CALL_PID];
+    if (CAS(&q->current->array[CALL_PID], &prev, pid)) {
+        q->current->array[CALL_SIGNAL] = signal;
         (void)AFS64(&q->accessors, 1);
         return SH_OK;
     }
@@ -2193,6 +2260,7 @@ extern sq_item_s shr_q_remove(
 
     while (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EAGAIN) {
+            signal_call(q);
             (void)AFS64(&q->accessors, 1);
             return (sq_item_s){.status = SH_ERR_EMPTY};
         }
@@ -2260,6 +2328,13 @@ extern sq_item_s shr_q_remove_wait(
 
     (void)AFA64(&q->accessors, 1);
 
+    if (q->current->array[CALL_SIGNAL] > 0 &&
+        sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        if (errno == EAGAIN) {
+            signal_call(q);
+        }
+    }
+
     while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             (void)AFS64(&q->accessors, 1);
@@ -2326,6 +2401,13 @@ extern sq_item_s shr_q_remove_timedwait(
         return (sq_item_s){.status = SH_ERR_STATE};
     }
     (void)AFA64(&q->accessors, 1);
+
+    if (q->current->array[CALL_SIGNAL] > 0 &&
+        sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        if (errno == EAGAIN) {
+            signal_call(q);
+        }
+    }
 
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -2660,6 +2742,30 @@ static void test_listen(void)
     status = shr_q_listen(q, SIGUSR1);
     assert(status == SH_OK);
     status = shr_q_listen(q, 0);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
+static void test_call(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    status = shr_q_call(q, -1);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_call(q, 0);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_call(q, SIGURG);
+    assert(status == SH_OK);
+    status = shr_q_call(q, SIGUSR1);
+    assert(status == SH_OK);
+    status = shr_q_call(q, 0);
     assert(status == SH_OK);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
@@ -3028,6 +3134,15 @@ static void test_empty_queue(void)
     assert(item.status == SH_ERR_EMPTY);
     assert(item.buffer == NULL);
     assert(item.buf_size == 0);
+    adds = 0;
+    status = shr_q_call(q, SIGUSR1);
+    assert(status == SH_OK);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_EMPTY);
+    assert(adds == 1);
+    item = shr_q_remove_timedwait(q, &item.buffer, &item.buf_size, &(struct timespec) {0, 10000000});
+    assert(item.status == SH_ERR_EMPTY);
+    assert(adds == 2);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
@@ -3149,6 +3264,7 @@ int main(void)
     test_alloc_node_slots();
     test_monitor();
     test_listen();
+    test_call();
     test_free_data_slots();
     test_large_data_allocation();
     test_add_errors();

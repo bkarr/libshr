@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.2.3
+Version: 0.3.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -22,6 +22,7 @@ maximum
 events
 - Event for very initial add, and not just add to empty queue
 - Configurable performance related events for monitoring
+- Signal for every time a queue remove would block to enable pull processing
 
 #### Working
 - shared_q -- interprocess queueing of arbitrary sized data of any type,
@@ -84,8 +85,13 @@ Performance/stress test:
       destroy		destroy queue
       drain			drains items in queue
       help			print list of commands
+      level			set event depth level
+      limit			set limit for timelimit event
       list			list of queues
+      monitor		monitors queue for events
       remove		remove item from queue
+      watch			listen for add to empty queue
+
 
        modifiers		 effects
       -----------		---------

@@ -244,7 +244,29 @@ extern sh_status_e shr_q_monitor(
 */
 extern sh_status_e shr_q_listen(
     shr_q_s *q,         // pointer to queue struct
-    int signal          // signal to use for event notification
+    int signal          // signal to use for item arrival notification
+);
+
+
+/*
+    shr_q_call -- registers calling process for notification when queue removes
+                  will block because queue is empty
+
+    Any non-zero value registers calling process for notification  using the
+    specified signal when a call blocks on remove from queue.  A value of zero
+    unregisters the process if it is currently registered.  Only a single
+    process can be registered for event notifications.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to queue struct is NULL, or if signal not greater
+                    than or equal to zero, or signal not in valid range
+    SH_ERR_STATE    if unable to add pid, or unregistering and pid does not match
+*/
+extern sh_status_e shr_q_call(
+    shr_q_s *q,         // pointer to queue struct
+    int signal          // signal to use for queue empty notification
 );
 
 
