@@ -6,9 +6,11 @@ CC = gcc
 EXE = sharedq
 LIB = -L../lib -static -lshr -lrt -lpthread
 
-CFLAGS = -I../include -g3 -O2 -std=gnu11 -pedantic -Wall -o $(EXE)
-
+all: CFLAGS = -I../include -g3 -O1 -std=gnu11 -pedantic -Wall -o $(EXE)
 all: main
+
+debug: CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+debug: main
 
 %: %.c
 	@$(CC) $< $(CFLAGS) $(LIB)

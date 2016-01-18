@@ -7,10 +7,13 @@ OBJECTS = shared_q.o
 TESTEXE = test_shrq
 LIB = -lrt -lpthread
 
-all: CFLAGS = -mcx16 -I../include -c -g3 -O2 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+all: CFLAGS = -mcx16 -I../include -c -g3 -O1 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
 all: shared_q
 
-check: CFLAGS = -mcx16 -I../include -DTESTMAIN -g3 -O2 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
+debug: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+debug: shared_q
+
+check: CFLAGS = -mcx16 -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
 check: clean shared_q
 	./$(TESTEXE)
 
