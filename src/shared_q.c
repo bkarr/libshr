@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015 Bryan Karr
+Copyright (c) 2016 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -40,10 +40,17 @@ THE SOFTWARE.
 #include <sys/types.h>
 #include <unistd.h>
 
+// define unchanging file system related constants
 #define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 #define SHR_OBJ_DIR "/dev/shm/"
 #define SHRQ "shrq"
 
+// define functional flags
+#define FLAG_ACTIVATED 1
+#define FLAG_DISCARD_EXPIRED 2
+#define FLAG_LIFO_ON_LEVEL 4
+
+// define useful time related macros
 #define timespecadd(a, b, result)                           \
     do {                                                    \
         (result)->tv_sec = (a)->tv_sec + (b)->tv_sec;       \
@@ -54,6 +61,7 @@ THE SOFTWARE.
         }                                                   \
     } while(0)
 
+// define useful integer constants (mostly sizes and offsets)
 enum shr_q_constants
 {
     PAGE_SIZE = 4096,   // initial size of memory mapped file for queue
@@ -67,12 +75,17 @@ enum shr_q_constants
     DATA_LENGTH = 3,    // offset for data length
 };
 
+// define queue header slot offsets
 enum shr_q_disp
 {
     TAG = 0,                        // queue identifier tag
     VERSION,                        // implementation version number
     SIZE,                           // size of queue array
     TOTAL,                          // total number of adds to queue
+    COUNT,                          // number of items on queue
+    FLAGS,                          // configuration flag values
+    EVENT_TAIL,                     // event queue tail
+    EVENT_TL_CNT,                   // event queue tail counter
     TAIL,                           // item queue tail
     TAIL_CNT,                       // item queue tail counter
     FREE_HEAD,                      // free node list head
@@ -85,14 +98,11 @@ enum shr_q_disp
     EVENT_HD_CNT,                   // event queue head counter
     ROOT_FREE,                      // root of free data index
     ROOT_RDX,                       // radix info for root
-    EVENT_TAIL,                     // event queue tail
-    EVENT_TL_CNT,                   // event queue tail counter
     HEAD,                           // item queue head
     HEAD_CNT,                       // item queue head counter
     FREE_TAIL,                      // free node list tail
     FREE_TL_CNT,                    // free node tail counter
     LEVEL,                          // queue depth event level
-    PAD,                            // padding
     LISTEN_PID,                     // arrival notification process id
     LISTEN_SIGNAL,                  // arrival notification signal
     LIMIT_SEC,                      // time limit in seconds
@@ -105,7 +115,7 @@ enum shr_q_disp
     CALL_PID = (IO_SEM +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 20),         // end of queue header
+    HDR_END = (AVAIL + 19),         // end of queue header
 };
 
 
@@ -1306,8 +1316,8 @@ static void release_prev_extents(
 static void signal_arrival(
     shr_q_s *q
 )   {
-    if (q->current->array[LISTEN_PID] == 0 ||
-        q->current->array[LISTEN_SIGNAL] == 0) {
+    if (q->current->array[LISTEN_SIGNAL] == 0 ||
+        q->current->array[LISTEN_PID] == 0) {
         return;
     }
     int sval = -1;
@@ -1344,7 +1354,14 @@ static void signal_call(
 }
 
 
-static void add_event(
+static inline bool is_monitored(
+    shr_q_s *q
+)   {
+    return (q->current->array[NOTIFY_SIGNAL] && q->current->array[NOTIFY_PID]);
+}
+
+
+static bool add_event(
     shr_q_s *q,
     sq_event_e event
 )   {
@@ -1352,14 +1369,14 @@ static void add_event(
 
     int64_t *array = view.extent->array;
 
-    if (array[NOTIFY_PID] == 0 || array[NOTIFY_SIGNAL] == 0) {
-        return;
+    if (array[NOTIFY_SIGNAL] == 0 || array[NOTIFY_PID] == 0) {
+        return false;
     }
 
     // allocate queue node
     view = alloc_node_slots(q);
     if (view.slot == 0) {
-        return;
+        return false;
     }
     array = view.extent->array;
 
@@ -1368,7 +1385,19 @@ static void add_event(
     // append node to end of queue
     add_end(q, view.slot, EVENT_TAIL);
 
-    signal_event(q);
+    return true;
+}
+
+
+static void notify_event(
+    shr_q_s *q,
+    sq_event_e event
+)   {
+    if(is_monitored(q)) {
+        if (add_event(q, event)) {
+            signal_event(q);
+        }
+    }
 }
 
 
@@ -1387,9 +1416,7 @@ static sh_status_e enq(
     }
     extent_s *extent = q->current;
     int64_t *array = extent->array;
-    // struct timespec curr_time;
-    // curr_time.tv_sec = array[data_slot + TM_SEC];
-    // curr_time.tv_nsec = array[data_slot + TM_NSEC];
+
     DWORD curr_time;
     curr_time.high = array[data_slot + TM_SEC];
     curr_time.low = array[data_slot + TM_NSEC];
@@ -1409,11 +1436,28 @@ static sh_status_e enq(
     // append node to end of queue
     add_end(q, node, TAIL);
 
-    if (AFA64(&array[TOTAL], 1) == 0) {
-        add_event(q, SQ_EVNT_INIT);
-    }
+    int64_t count = AFA64(&array[COUNT], 1);
+    if (is_monitored(q)) {
+        bool need_signal = false;
+        if (!(array[FLAGS] & FLAG_ACTIVATED)) {
+            int64_t prev = array[FLAGS];
+            while (!(prev & FLAG_ACTIVATED)) {
+                if (CAS(&array[FLAGS], &prev, prev | FLAG_ACTIVATED)) {
+                    need_signal = add_event(q, SQ_EVNT_INIT);
+                    break;
+                }
 
+            }
+        }
+        if (count == 0) {
+            need_signal = add_event(q, SQ_EVNT_NONEMPTY);
+        }
+        if (need_signal) {
+            signal_event(q);
+        }
+    }
     signal_arrival(q);
+
 
     struct timespec prev_time = *(struct timespec*)&array[TS_SEC];
     DWCAS((DWORD*)&array[TS_SEC], (DWORD*)&prev_time, curr_time);
@@ -1533,9 +1577,20 @@ static sq_item_s deq(
         item.timestamp = *buffer;
         item.value = (uint8_t*)*buffer + (3 * sizeof(int64_t));
 
-        if (timelimit_exceeded(q, array[data_slot + TM_SEC],
-                array[data_slot + TM_NSEC])) {
-            add_event(q, SQ_EVNT_TIME);
+        int64_t count = AFS64(&array[COUNT], 1);
+
+        if (is_monitored(q)) {
+            bool need_signal = false;
+            if (count == 1) {
+                need_signal = add_event(q, SQ_EVNT_EMPTY);
+            }
+            if (timelimit_exceeded(q, array[data_slot + TM_SEC],
+                    array[data_slot + TM_NSEC])) {
+                need_signal = add_event(q, SQ_EVNT_TIME);
+            }
+            if (need_signal) {
+                signal_event(q);
+            }
         }
 
         free_data_slots(q, data_slot, array[data_slot]);
@@ -1574,6 +1629,10 @@ static void check_level(
 )   {
     view_s view = {.extent = q->current};
     int64_t *array = view.extent->array;
+
+    if (array[NOTIFY_SIGNAL] == 0 || array[NOTIFY_PID] == 0) {
+        return;
+    }
 
     int64_t level = array[LEVEL];
     if (level <= 0) {
@@ -2065,7 +2124,7 @@ extern sh_status_e shr_q_add(
 
     while (sem_trywait((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
         if (errno == EAGAIN) {
-            add_event(q, SQ_EVNT_DEPTH);
+            notify_event(q, SQ_EVNT_DEPTH);
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_LIMIT;
         }
@@ -2085,7 +2144,9 @@ extern sh_status_e shr_q_add(
         }
     }
 
-    check_level(q);
+    if (is_monitored(q)) {
+        check_level(q);
+    }
 
     (void)AFS64(&q->accessors, 1);
     return status;
@@ -2122,7 +2183,7 @@ extern sh_status_e shr_q_add_wait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&q->current->array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        add_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_DEPTH);
     }
 
     while (sem_wait((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
@@ -2141,7 +2202,9 @@ extern sh_status_e shr_q_add_wait(
         }
     }
 
-    check_level(q);
+    if (is_monitored(q)) {
+        check_level(q);
+    }
 
     (void)AFS64(&q->accessors, 1);
     return status;
@@ -2181,7 +2244,7 @@ extern sh_status_e shr_q_add_timedwait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&q->current->array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        add_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_DEPTH);
     }
 
     struct timespec ts;
@@ -2207,7 +2270,9 @@ extern sh_status_e shr_q_add_timedwait(
         }
     }
 
-    check_level(q);
+    if (is_monitored(q)) {
+        check_level(q);
+    }
 
     (void)AFS64(&q->accessors, 1);
     return status;
@@ -2542,10 +2607,10 @@ extern int64_t shr_q_count(
         return -1;
     }
     (void)AFA64(&q->accessors, 1);
-    int sval = -1;
-    (void)sem_getvalue((sem_t*)&q->current->array[READ_SEM], &sval);
+    int64_t result = -1;
+    result = q->current->array[COUNT];
     (void)AFS64(&q->accessors, 1);
-    return sval;
+    return result;
 }
 
 
@@ -3165,6 +3230,7 @@ static void test_single_item_queue(void)
     assert(shr_q_add(q, "test", 4) == SH_OK);
     assert(shr_q_count(q) == 1);
     assert(shr_q_event(q) == SQ_EVNT_INIT);
+    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
     assert(shr_q_event(q) == SQ_EVNT_DEPTH);
     assert(shr_q_count(q) == 1);
@@ -3176,9 +3242,10 @@ static void test_single_item_queue(void)
     assert(item.value != NULL);
     assert(memcmp(item.value, "test", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     assert(shr_q_add(q, "test1", 5) == SH_OK);
     assert(shr_q_count(q) == 1);
-    assert(shr_q_event(q) == SQ_EVNT_NONE);
+    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     item = shr_q_remove(q, &item.buffer, &item.buf_size);
     assert(item.status == SH_OK);
     assert(item.buffer != NULL);
@@ -3187,8 +3254,9 @@ static void test_single_item_queue(void)
     assert(item.value != NULL);
     assert(memcmp(item.value, "test1", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     free(item.buffer);
-    assert(events == 2);
+    assert(events == 5);
     assert(adds == 2);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
@@ -3212,6 +3280,7 @@ static void test_multi_item_queue(void)
     assert(shr_q_add(q, "test1", 5) == SH_OK);
     assert(shr_q_count(q) == 1);
     assert(shr_q_event(q) == SQ_EVNT_INIT);
+    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     assert(shr_q_add(q, "test2", 5) == SH_OK);
     assert(shr_q_count(q) == 2);
     assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
@@ -3233,9 +3302,10 @@ static void test_multi_item_queue(void)
     assert(item.value != NULL);
     assert(memcmp(item.value, "test2", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     assert(shr_q_add(q, "test3", 5) == SH_OK);
     assert(shr_q_count(q) == 1);
-    assert(shr_q_event(q) == SQ_EVNT_NONE);
+    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     item = shr_q_remove(q, &item.buffer, &item.buf_size);
     assert(item.status == SH_OK);
     assert(item.buffer != NULL);
@@ -3244,8 +3314,9 @@ static void test_multi_item_queue(void)
     assert(item.value != NULL);
     assert(memcmp(item.value, "test3", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     free(item.buffer);
-    assert(events == 2);
+    assert(events == 5);
     assert(adds == 2);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);

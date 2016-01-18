@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.3.0
+Version: 0.3.1
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -62,7 +62,7 @@ Performance/stress test:
     time:  0.0762
     ~/libshr/shrq_harness $ ./shrq_harness 8 1 630000
     input SUM[0..2520000]=3175201260000 output=3175201260000
-    time:  0.9981
+    time:  1.0003
 
 
 

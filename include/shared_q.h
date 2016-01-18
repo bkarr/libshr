@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015 Bryan Karr
+Copyright (c) 2016 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -85,7 +85,9 @@ typedef enum
     SQ_EVNT_INIT,           // first item added to queue
     SQ_EVNT_DEPTH,          // max depth reached
     SQ_EVNT_TIME,           // max time limit reached
-    SQ_EVNT_LEVEL           // depth level reached
+    SQ_EVNT_LEVEL,          // depth level reached
+    SQ_EVNT_EMPTY,          // last item on queue removed
+    SQ_EVNT_NONEMPTY        // item added to empty queue
 } sq_event_e;
 
 typedef enum
