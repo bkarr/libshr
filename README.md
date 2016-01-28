@@ -18,11 +18,14 @@ for interprocess communications.
 - Number of items on queue configurable and maximum governed by semaphore count
 maximum
 - Number of queues limited only by number of open files per process
-- Separate process listeners for arrivals on empty queue versus other monitoring
+- Separate process listener for arrivals on empty queue versus other monitoring
 events
-- Event for very initial add, and not just add to empty queue
+- Separate process listener for remove blocking on an empty queue to enable pull
+processing
+- Event for very initial add, as well as, an add to empty queue
+- Event for queue removal producing an empty queue
 - Configurable performance related events for monitoring
-- Signal for every time a queue remove would block to enable pull processing
+
 
 #### Working
 - shared_q -- interprocess queueing of arbitrary sized data of any type,
