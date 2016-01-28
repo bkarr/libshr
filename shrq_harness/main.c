@@ -75,8 +75,8 @@ static int64_t iterations;
 static volatile unsigned long input = 0;
 static volatile unsigned long output = 0;
 static volatile unsigned long verif = 0;
-static volatile unsigned long count1 = 0;
-static volatile unsigned long count2 = 0;
+// static volatile unsigned long count1 = 0;
+// static volatile unsigned long count2 = 0;
 static shr_q_s *queue;
 static int waiting = 0;
 static int64_t msg_size = DEFAULT_SIZE;
@@ -130,8 +130,8 @@ void *validate_producer(
 #endif
     assert(wait() == 0);
     ptr = (unsigned long *)malloc(msg_size);
+    assert(ptr);
     for (i = 0; i < iterations; ++i) {
-        assert(ptr);
         //printf("add %lx\n", (uint64_t)ptr);
         *ptr = AAF(&input, 1);
         //printf("%li\n", *ptr);
@@ -187,10 +187,10 @@ void *validate_consumer(
         if (ptr) {
             //printf("remove %lx\n", (uint64_t)ptr);
             total += *ptr;
-            AAF(&count1, 1);
+            // AAF(&count1, 1);
             ptr = 0;
         }
-        AAF(&count2, 1);
+        // AAF(&count2, 1);
     }
     AAF(&output, total);
 #ifndef MTHRD
