@@ -1416,6 +1416,22 @@ static void notify_event(
 }
 
 
+static void update_empty_timestamp(
+    int64_t *array      // active q array
+)   {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_REALTIME, &curr_time);
+    struct timespec last = *(struct timespec *)&array[EMPTY_SEC];
+    DWORD next = {.high = curr_time.tv_sec, .low = curr_time.tv_nsec};
+    while (timespeccmp(&curr_time, &last, >)) {
+        if (DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
+            break;
+        }
+        last = *(struct timespec *)&array[EMPTY_SEC];
+    }
+}
+
+
 static sh_status_e enq(
     shr_q_s *q,         // pointer to queue, not NULL
     void *value,        // pointer to item, not NULL
@@ -1452,6 +1468,11 @@ static sh_status_e enq(
     add_end(q, node, TAIL);
 
     int64_t count = AFA64(&array[COUNT], 1);
+    if (count == 0) {
+        // queue emptied
+        update_empty_timestamp(array);
+    }
+
     if (is_monitored(q)) {
         bool need_signal = false;
         if (!(array[FLAGS] & FLAG_ACTIVATED)) {
@@ -1532,21 +1553,6 @@ static bool timelimit_exceeded(
     return false;
 }
 
-static void update_empty_timestamp(
-    int64_t *array      // active q array
-)   {
-    struct timespec curr_time;
-    clock_gettime(CLOCK_REALTIME, &curr_time);
-    struct timespec last = *(struct timespec *)&array[EMPTY_SEC];
-    DWORD next = {.high = curr_time.tv_sec, .low = curr_time.tv_nsec};
-    while (timespeccmp(&curr_time, &last, >)) {
-        if (DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
-            break;
-        }
-        last = *(struct timespec *)&array[EMPTY_SEC];
-    }
-}
-
 
 static sq_item_s deq(
     shr_q_s *q,         // pointer to queue
@@ -1608,10 +1614,6 @@ static sq_item_s deq(
         item.value = (uint8_t*)*buffer + (3 * sizeof(int64_t));
 
         int64_t count = AFS64(&array[COUNT], 1);
-        if (count == 1) {
-            // queue emptied
-            update_empty_timestamp(array);
-        }
 
         if (is_monitored(q)) {
             bool need_signal = false;
