@@ -1482,7 +1482,7 @@ static sh_status_e enq(
                     need_signal = add_event(q, SQ_EVNT_INIT);
                     break;
                 }
-
+                prev = array[FLAGS]
             }
         }
         if (count == 0) {
