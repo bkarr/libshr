@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.3.1
+Version: 0.4.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -25,6 +25,8 @@ processing
 - Event for very initial add, as well as, an add to empty queue
 - Event for queue removal producing an empty queue
 - Configurable performance related events for monitoring
+- Ability to clean items older than a specified time limit from front of queue
+- Can return timestamp for the last time the queue was emptied if not currently empty
 
 
 #### Working
@@ -62,10 +64,10 @@ Performance/stress test:
     ~/libshr $ cd shrq_harness
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
     input SUM[0..100000]=5000050000 output=5000050000
-    time:  0.0762
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 630000
-    input SUM[0..2520000]=3175201260000 output=3175201260000
-    time:  1.0003
+    time:  0.1033
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 625000
+    input SUM[0..2500000]=3125001250000 output=3125001250000
+    time:  1.0044
 
 
 
@@ -93,8 +95,8 @@ Performance/stress test:
       list			list of queues
       monitor		monitors queue for events
       remove		remove item from queue
-      watch			listen for add to empty queue
-
+      listen		listen for add to empty queue
+      call			call when there are removes on empty queue
 
        modifiers		 effects
       -----------		---------
