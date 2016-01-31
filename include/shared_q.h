@@ -428,7 +428,7 @@ extern sq_item_s shr_q_remove_timedwait(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     void **buffer,              // address of buffer pointer -- not NULL
     int64_t *buff_size,         // pointer to size of buffer -- not NULL
-    struct timespec *timeout    // timeout value
+    struct timespec *timeout    // timeout value -- not NULL
 );
 
 
@@ -504,6 +504,40 @@ extern sh_status_e shr_q_timelimit(
     long nanoseconds            // number of nanoseconds till event
 );
 
+
+/*
+    shr_q_clean  -- remove items from front of queue that have exceeded
+    specified time limit
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q or timelimit is NULL
+    SH_ERR_STATE    if q is immutable or write only, or not a valid queue
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+
+*/
+extern sh_status_e shr_q_clean(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timelimit  // timelimit value -- not NULL
+);
+
+
+
+/*
+    shr_q_last_empty  -- returns timestamp of last time queue was empty
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q or timestamp is NULL
+    SH_ERR_EMPTY    if q is currently empty, timestamp not updated
+
+*/
+extern sh_status_e shr_q_last_empty(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timestamp  // timestamp pointer -- not NULL
+);
 
 
 #ifdef __cplusplus

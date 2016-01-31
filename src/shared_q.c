@@ -61,6 +61,21 @@ THE SOFTWARE.
         }                                                   \
     } while(0)
 
+# define timespecsub(a, b, result)                          \
+  do {                                                      \
+    (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;           \
+    (result)->tv_nsec = (a)->tv_nsec - (b)->tv_nsec;        \
+    if ((result)->tv_nsec < 0) {                            \
+      --(result)->tv_sec;                                   \
+      (result)->tv_nsec += 1000000000;                      \
+    }                                                       \
+  } while (0)
+
+  #define timespeccmp(a, b, cmp)                  \
+      (((a)->tv_sec == (b)->tv_sec) ?             \
+      ((a)->tv_nsec cmp (b)->tv_nsec) :           \
+      ((a)->tv_sec cmp (b)->tv_sec))
+
 // define useful integer constants (mostly sizes and offsets)
 enum shr_q_constants
 {
@@ -81,9 +96,9 @@ enum shr_q_disp
     TAG = 0,                        // queue identifier tag
     VERSION,                        // implementation version number
     SIZE,                           // size of queue array
-    TOTAL,                          // total number of adds to queue
     COUNT,                          // number of items on queue
     FLAGS,                          // configuration flag values
+    LEVEL,                          // queue depth event level
     EVENT_TAIL,                     // event queue tail
     EVENT_TL_CNT,                   // event queue tail counter
     TAIL,                           // item queue tail
@@ -92,6 +107,8 @@ enum shr_q_disp
     FREE_HD_CNT,                    // free node head counter
     TS_SEC,                         // timestamp of last add in seconds
     TS_NSEC,                        // timestamp of last add in nanoseconds
+    LISTEN_PID,                     // arrival notification process id
+    LISTEN_SIGNAL,                  // arrival notification signal
     NODE_ALLOC,                     // next available node allocation slot
     DATA_ALLOC,                     // next available data allocation slot
     EVENT_HEAD,                     // event queue head
@@ -102,9 +119,8 @@ enum shr_q_disp
     HEAD_CNT,                       // item queue head counter
     FREE_TAIL,                      // free node list tail
     FREE_TL_CNT,                    // free node tail counter
-    LEVEL,                          // queue depth event level
-    LISTEN_PID,                     // arrival notification process id
-    LISTEN_SIGNAL,                  // arrival notification signal
+    EMPTY_SEC,                      // time q last empty in seconds
+    EMPTY_NSEC,                     // time q last empty in nanoseconds
     LIMIT_SEC,                      // time limit in seconds
     LIMIT_NSEC,                     // time limit in nanoseconds
     NOTIFY_PID,                     // event notification process id
@@ -115,7 +131,7 @@ enum shr_q_disp
     CALL_PID = (IO_SEM +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 19),         // end of queue header
+    HDR_END = (AVAIL + 18),         // end of queue header
 };
 
 
@@ -327,7 +343,6 @@ static inline char DWCAS(
 #define AFA64(mem, v) atomic_fetch_add_explicit(mem, v, memory_order_relaxed)
 #define CAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new, memory_order_relaxed, memory_order_relaxed)
 #define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new, memory_order_relaxed, memory_order_relaxed)
-//#define DWCAS(val, old, new) __atomic_compare_exchange(val, old, new, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)
 
 #endif
 
@@ -1517,6 +1532,21 @@ static bool timelimit_exceeded(
     return false;
 }
 
+static void update_empty_timestamp(
+    int64_t *array      // active q array
+)   {
+    struct timespec curr_time;
+    clock_gettime(CLOCK_REALTIME, &curr_time);
+    struct timespec last = *(struct timespec *)&array[EMPTY_SEC];
+    DWORD next = {.high = curr_time.tv_sec, .low = curr_time.tv_nsec};
+    while (timespeccmp(&curr_time, &last, >)) {
+        if (DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
+            break;
+        }
+        last = *(struct timespec *)&array[EMPTY_SEC];
+    }
+}
+
 
 static sq_item_s deq(
     shr_q_s *q,         // pointer to queue
@@ -1578,6 +1608,10 @@ static sq_item_s deq(
         item.value = (uint8_t*)*buffer + (3 * sizeof(int64_t));
 
         int64_t count = AFS64(&array[COUNT], 1);
+        if (count == 1) {
+            // queue emptied
+            update_empty_timestamp(array);
+        }
 
         if (is_monitored(q)) {
             bool need_signal = false;
@@ -1667,6 +1701,28 @@ static void check_level(
     signal_event(q);
 
     return;
+}
+
+
+static bool item_exceeds_limit(
+    shr_q_s *q,                     // pointer to queue
+    int64_t item_slot,              // array index for item
+    struct timespec *timelimit      // expiration timelimit
+)   {
+    if (q == NULL || item_slot < HDR_END || timelimit == NULL) {
+        return false;
+    }
+    view_s view = insure_in_range(q, item_slot);
+    int64_t *array = view.extent->array;
+    struct timespec curr_time;
+    clock_gettime(CLOCK_REALTIME, &curr_time);
+    struct timespec diff = {0, 0};
+    struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
+    timespecsub(&curr_time, item, &diff);
+    if (timespeccmp(&diff, timelimit, >)) {
+        return true;
+    }
+    return false;
 }
 
 /*==============================================================================
@@ -2452,7 +2508,7 @@ extern sq_item_s shr_q_remove_timedwait(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     void **buffer,              // address of buffer pointer -- not NULL
     int64_t *buff_size,         // pointer to size of buffer -- not NULL
-    struct timespec *timeout    // timeout value
+    struct timespec *timeout    // timeout value -- not NULL
 )   {
     if (q == NULL ||
         buffer == NULL ||
@@ -2673,7 +2729,125 @@ extern sh_status_e shr_q_timelimit(
     } while (!DWCAS((DWORD*)&array[LIMIT_SEC], (DWORD*)&prev, next));
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
+}
 
+
+/*
+    shr_q_clean  -- remove items from front of queue that have exceeded
+    specified time limit
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q or timespec is NULL
+    SH_ERR_STATE    if q is immutable or write only, or not a valid queue
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+
+*/
+extern sh_status_e shr_q_clean(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timelimit  // timelimit value -- not NULL
+)   {
+    if (q == NULL || timelimit == NULL) {
+        return SH_ERR_ARG;
+    }
+
+    if (!(q->mode & SQ_READ_ONLY)) {
+        return SH_ERR_STATE;
+    }
+
+    (void)AFA64(&q->accessors, 1);
+
+    while(true) {
+        while (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+            if (errno == EAGAIN) {
+                (void)AFS64(&q->accessors, 1);
+                return SH_OK;
+            }
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                return SH_ERR_STATE;
+            }
+        }
+
+        int64_t *array = q->current->array;
+        int64_t gen = array[HEAD_CNT];
+        int64_t head = array[HEAD];
+        if (head == array[TAIL]) {
+            break;
+        }
+        view_s view = insure_in_range(q, head);
+        array = view.extent->array;
+        int64_t data_slot = next_item(q, head);
+        if (data_slot == 0) {
+            break;
+        }
+        // insure data is accessible
+        view = insure_in_range(q, data_slot);
+        if (view.slot == 0) {
+            break;
+        }
+
+        if (!item_exceeds_limit(q, data_slot, timelimit)) {
+            break;
+        }
+
+        if (remove_front(q, head, gen, HEAD, TAIL) == 0) {
+            break;
+        }
+
+        AFS64(&array[COUNT], 1);
+
+        // free queue node
+        add_end(q, head, FREE_TAIL);
+        free_data_slots(q, data_slot, array[data_slot]);
+
+        while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                return SH_ERR_STATE;
+            }
+        }
+    }
+
+    while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_last_empty  -- returns timestamp of last time queue was empty
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q or timestamp is NULL
+    SH_ERR_EMPTY    if q is currently empty, timestamp not updated
+
+*/
+extern sh_status_e shr_q_last_empty(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timestamp  // timestamp pointer -- not NULL
+)   {
+    if (q == NULL || timestamp == NULL) {
+        return SH_ERR_ARG;
+    }
+
+    (void)AFA64(&q->accessors, 1);
+    if (q->current->array[COUNT] == 0) {
+        (void)AFS64(&q->accessors, 1);
+        return SH_ERR_EMPTY;
+    }
+    *timestamp = *(struct timespec *)&q->current->array[EMPTY_SEC];
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
 }
 
 
@@ -2832,6 +3006,40 @@ static void test_call(void)
     assert(status == SH_OK);
     status = shr_q_call(q, 0);
     assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
+static void test_clean(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    struct timespec limit = {0, 10000000};
+    struct timespec sleep = {0, 20000000};
+    struct timespec max = {1, 0};
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    status = shr_q_add(q, "test", 4);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 1);
+    nanosleep(&sleep, &sleep);
+    assert(shr_q_clean(NULL, &limit) == SH_ERR_ARG);
+    assert(shr_q_clean(q, NULL) == SH_ERR_ARG);
+    assert(shr_q_clean(q, &limit) == SH_OK);
+    assert(shr_q_count(q) == 0);
+    status = shr_q_add(q, "test1", 5);
+    assert(status == SH_OK);
+    status = shr_q_add(q, "test2", 5);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 2);
+    nanosleep(&sleep, &sleep);
+    assert(shr_q_clean(q, &max) == SH_OK);
+    assert(shr_q_count(q) == 2);
+    assert(shr_q_clean(q, &limit) == SH_OK);
+    assert(shr_q_count(q) == 0);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
@@ -3183,6 +3391,41 @@ static void test_remove_wait_errors(void)
     assert(status == SH_OK);
 }
 
+static void test_remove_timedwait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    sq_item_s item;
+    struct timespec ts = {0};
+
+    item = shr_q_remove_timedwait(q, &item.buffer, &item.buf_size, &ts);
+    assert(item.status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    item = shr_q_remove_timedwait(q, &item.buffer, &item.buf_size, &ts);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove_timedwait(q, &item.buffer, &item.buf_size, &ts);
+    assert(item.status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    item = shr_q_remove_timedwait(tq, NULL, &item.buf_size, &ts);
+    assert(item.status == SH_ERR_ARG);
+    item = shr_q_remove_timedwait(q, &item.buffer, NULL, &ts);
+    assert(item.status == SH_ERR_ARG);
+    item = shr_q_remove_timedwait(q, &item.buffer, &item.buf_size, NULL);
+    assert(item.status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
 static void test_empty_queue(void)
 {
     sh_status_e status;
@@ -3336,6 +3579,7 @@ int main(void)
     test_monitor();
     test_listen();
     test_call();
+    test_clean();
     test_free_data_slots();
     test_large_data_allocation();
     test_add_errors();
@@ -3343,6 +3587,7 @@ int main(void)
     test_add_timedwait_errors();
     test_remove_errors();
     test_remove_wait_errors();
+    test_remove_timedwait_errors();
 
     // set up to test open and close
     shr_q_s *q;
