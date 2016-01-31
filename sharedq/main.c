@@ -65,10 +65,11 @@ char *cmd_str[] = {
     "add",
     "remove",
     "drain",
-    "watch",
+    "listen",
     "monitor",
     "level",
     "limit",
+    "call",
 };
 
 typedef enum cmd_codes {
@@ -79,16 +80,18 @@ typedef enum cmd_codes {
     ADD,
     REMOVE,
     DRAIN,
-    WATCH,
+    LISTEN,
     MONITOR,
     LEVEL,
     LIMIT,
+    CALL,
     CODE_MAX
 } cmd_code_e;
 
 static int running = 1;
 static sem_t adds;
 static sem_t events;
+static sem_t calls;
 
 void sharedq_help_create()
 {
@@ -160,10 +163,20 @@ void sharedq_help_drain()
 }
 
 
-void sharedq_help_watch()
+void sharedq_help_listen()
 {
-    printf("sharedq [modifiers] watch <name>\n");
+    printf("sharedq [modifiers] listen <name>\n");
     printf("\n  --listens for an item being added to the specified queue when empty\n");
+    printf("\n   modifiers\t\t effects\n");
+    printf("  -----------\t\t---------\n");
+    printf("  -h\t\t\tprints help for the specified command\n");
+}
+
+
+void sharedq_help_call()
+{
+    printf("sharedq [modifiers] call <name>\n");
+    printf("\n  --call when there is an attempted remove from empty queue\n");
     printf("\n   modifiers\t\t effects\n");
     printf("  -----------\t\t---------\n");
     printf("  -h\t\t\tprints help for the specified command\n");
@@ -222,7 +235,8 @@ void sharedq_help(int argc, char *argv[], int index)
     printf("  list\t\t\tlist of queues\n");
     printf("  monitor\t\tmonitors queue for events\n");
     printf("  remove\t\tremove item from queue\n");
-    printf("  watch\t\t\tlisten for add to empty queue\n");
+    printf("  listen\t\tlisten for add to empty queue\n");
+    printf("  call\t\t\tcall when there are removes on empty queue\n");
     printf("\n   modifiers\t\t effects\n");
     printf("  -----------\t\t---------\n");
     printf("  -b\t\t\tblocks waiting for an item to arrive\n");
@@ -881,11 +895,11 @@ void sharedq_monitor(int argc, char *argv[], int index)
 }
 
 
-void sharedq_watch(int argc, char *argv[], int index)
+void sharedq_listen(int argc, char *argv[], int index)
 {
     if ((argc - index + 1) < 3 || (argc - index + 1) > 3)
     {
-        sharedq_help_watch();
+        sharedq_help_listen();
         return;
     }
 
@@ -893,7 +907,7 @@ void sharedq_watch(int argc, char *argv[], int index)
 
     if (param.help)
     {
-        sharedq_help_watch();
+        sharedq_help_listen();
         return;
     }
 
@@ -931,6 +945,62 @@ void sharedq_watch(int argc, char *argv[], int index)
             break;
         }
         printf("Item added to empty queue %s\n", argv[index + 1]);
+    }
+
+    shr_q_close(&q);
+}
+
+
+void sharedq_call(int argc, char *argv[], int index)
+{
+    if ((argc - index + 1) < 3 || (argc - index + 1) > 3)
+    {
+        sharedq_help_call();
+        return;
+    }
+
+    modifiers_s param = parse_modifiers(argc, argv, index, "h");
+
+    if (param.help)
+    {
+        sharedq_help_call();
+        return;
+    }
+
+    shr_q_s *q = NULL;
+    sh_status_e status = shr_q_open(&q, argv[index + 1], SQ_READ_ONLY);
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for open function\n");
+        return;
+    }
+    if (status == SH_ERR_ACCESS) {
+        printf("sharedq:  permission error for queue name\n");
+        return;
+    }
+    if (status == SH_ERR_EXIST) {
+        printf("sharedq:  queue name does not exist\n");
+        return;
+    }
+    if (status == SH_ERR_PATH) {
+        printf("sharedq:  error in queue name path\n");
+        return;
+    }
+    if (status == SH_ERR_SYS) {
+        printf("sharedq:  system call error\n");
+        return;
+    }
+
+    shr_q_call(q, SIGURG);
+
+    while(running) {
+        int rc = sem_wait(&calls);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        printf("Attempted remove from empty queue %s\n", argv[index + 1]);
     }
 
     shr_q_close(&q);
@@ -1059,10 +1129,11 @@ cmd_f cmds[] = {
     sharedq_add,
     sharedq_remove,
     sharedq_drain,
-    sharedq_watch,
+    sharedq_listen,
     sharedq_monitor,
     sharedq_level,
     sharedq_limit,
+    sharedq_call,
 };
 
 
@@ -1072,6 +1143,8 @@ static void sig_usr(int signo)
         sem_post(&adds);
     } else if (signo == SIGUSR2) {
         sem_post(&events);
+    } else if (signo == SIGURG) {
+        sem_post(&calls);
     } else if (signo == SIGTERM) {
         running = 0;
     }
@@ -1084,6 +1157,9 @@ static void set_signal_handlers(void)
         printf("cannot catch SIGUSR1\n");
     }
     if (signal(SIGUSR2, sig_usr) == SIG_ERR) {
+        printf("cannot catch SIGUSR2\n");
+    }
+    if (signal(SIGURG, sig_usr) == SIG_ERR) {
         printf("cannot catch SIGUSR2\n");
     }
     if (signal(SIGTERM, sig_usr) == SIG_ERR) {
@@ -1123,6 +1199,12 @@ int main(
     rc = sem_init(&events, 0, 1);
     if (rc < 0) {
         printf("unable to initialize event semapahore\n");
+        return 0;
+    }
+
+    rc = sem_init(&calls, 0, 0);
+    if (rc < 0) {
+        printf("unable to initialize call semapahore\n");
         return 0;
     }
 
