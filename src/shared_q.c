@@ -373,6 +373,38 @@ static sh_status_e convert_to_status(
 }
 
 
+static inline bool set_flag(
+    int64_t *array,
+    int64_t indicator
+)   {
+    int64_t prev = array[FLAGS];
+    while (!(prev & indicator)) {
+        if (CAS(&array[FLAGS], &prev, prev | indicator)) {
+            return true;
+        }
+        prev = array[FLAGS];
+    }
+    return false;
+}
+
+
+/*
+static bool clear_flag(
+    int64_t *array,
+    int64_t indicator
+)   {
+    int64_t mask = ~indicator;
+    int64_t prev = array[FLAGS];
+    while (prev | indicator) {
+        if (CAS(&array[FLAGS], &prev, prev & mask)) {
+            return true;
+        }
+        prev = array[FLAGS];
+    }
+    return false;
+}*/
+
+
 static sh_status_e init_queue(
     shr_q_s **q,                // address of q struct pointer -- not NULL
     uint32_t max_depth          // max depth allowed at which add is blocked
@@ -1468,21 +1500,16 @@ static sh_status_e enq(
     add_end(q, node, TAIL);
 
     int64_t count = AFA64(&array[COUNT], 1);
-    if (count == 0) {
-        // queue emptied
-        update_empty_timestamp(array);
-    }
 
     if (is_monitored(q)) {
+        if (count == 0) {
+            // queue emptied
+            update_empty_timestamp(array);
+        }
         bool need_signal = false;
         if (!(array[FLAGS] & FLAG_ACTIVATED)) {
-            int64_t prev = array[FLAGS];
-            while (!(prev & FLAG_ACTIVATED)) {
-                if (CAS(&array[FLAGS], &prev, prev | FLAG_ACTIVATED)) {
-                    need_signal = add_event(q, SQ_EVNT_INIT);
-                    break;
-                }
-                prev = array[FLAGS]
+            if (set_flag(array, FLAG_ACTIVATED)) {
+                need_signal = add_event(q, SQ_EVNT_INIT);
             }
         }
         if (count == 0) {
