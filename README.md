@@ -25,7 +25,7 @@ events
 - Event for queue removal producing an empty queue
 - Configurable performance related events for monitoring
 - Ability to clean items older than a specified time limit from front of queue
-- Can return timestamp for the last time the queue was emptied if not currently empty
+- Can return timestamp for the last time the queue empty if not currently empty
 
 
 #### Working
