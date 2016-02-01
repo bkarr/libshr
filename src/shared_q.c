@@ -97,8 +97,6 @@ enum shr_q_disp
     VERSION,                        // implementation version number
     SIZE,                           // size of queue array
     COUNT,                          // number of items on queue
-    FLAGS,                          // configuration flag values
-    LEVEL,                          // queue depth event level
     EVENT_TAIL,                     // event queue tail
     EVENT_TL_CNT,                   // event queue tail counter
     TAIL,                           // item queue tail
@@ -130,8 +128,11 @@ enum shr_q_disp
     IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
     CALL_PID = (IO_SEM +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
+    CALLER_COUNT,                   // block caller count
+    FLAGS,                          // configuration flag values
+    LEVEL,                          // queue depth event level
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 18),         // end of queue header
+    HDR_END = (AVAIL + 17),         // end of queue header
 };
 
 
@@ -1408,6 +1409,13 @@ static inline bool is_monitored(
 }
 
 
+static inline bool is_call_monitored(
+    shr_q_s *q
+)   {
+    return (q->current->array[CALL_SIGNAL] && q->current->array[CALL_PID]);
+}
+
+
 static bool add_event(
     shr_q_s *q,
     sq_event_e event
@@ -2478,18 +2486,28 @@ extern sq_item_s shr_q_remove_wait(
 
     (void)AFA64(&q->accessors, 1);
 
+    bool will_block = false;
     if (q->current->array[CALL_SIGNAL] > 0 &&
         sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EAGAIN) {
+            AFA64(&q->current->array[CALLER_COUNT], 1);
+            will_block = true;
             signal_call(q);
         }
     }
 
     while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
+            if (will_block) {
+                AFS64(&q->current->array[CALLER_COUNT], 1);
+            }
             (void)AFS64(&q->accessors, 1);
             return (sq_item_s){.status = SH_ERR_STATE};
         }
+    }
+
+    if (will_block) {
+        AFS64(&q->current->array[CALLER_COUNT], 1);
     }
 
     sq_item_s item = deq(q, buffer, buff_size);
@@ -2552,9 +2570,12 @@ extern sq_item_s shr_q_remove_timedwait(
     }
     (void)AFA64(&q->accessors, 1);
 
+    bool will_block = false;
     if (q->current->array[CALL_SIGNAL] > 0 &&
         sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EAGAIN) {
+            AFA64(&q->current->array[CALLER_COUNT], 1);
+            will_block = true;
             signal_call(q);
         }
     }
@@ -2564,13 +2585,23 @@ extern sq_item_s shr_q_remove_timedwait(
     timespecadd(&ts, timeout, &ts);
     while (sem_timedwait((sem_t*)&q->current->array[READ_SEM], &ts) < 0) {
         if (errno == ETIMEDOUT) {
+            if (will_block) {
+                AFS64(&q->current->array[CALLER_COUNT], 1);
+            }
             (void)AFS64(&q->accessors, 1);
             return (sq_item_s){.status = SH_ERR_EMPTY};
         }
         if (errno == EINVAL) {
+            if (will_block) {
+                AFS64(&q->current->array[CALLER_COUNT], 1);
+            }
             (void)AFS64(&q->accessors, 1);
             return (sq_item_s){.status = SH_ERR_STATE};
         }
+    }
+
+    if (will_block) {
+        AFS64(&q->current->array[CALLER_COUNT], 1);
     }
 
     sq_item_s item = deq(q, buffer, buff_size);
@@ -2879,6 +2910,24 @@ extern sh_status_e shr_q_last_empty(
     *timestamp = *(struct timespec *)&q->current->array[EMPTY_SEC];
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
+}
+
+
+/*
+    shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
+
+*/
+extern int64_t shr_q_call_count(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return -1;
+    }
+    (void)AFA64(&q->accessors, 1);
+    int64_t result = -1;
+    result = q->current->array[CALLER_COUNT];
+    (void)AFS64(&q->accessors, 1);
+    return result;
 }
 
 

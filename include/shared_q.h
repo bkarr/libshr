@@ -542,6 +542,15 @@ extern sh_status_e shr_q_last_empty(
 );
 
 
+/*
+    shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
+
+*/
+extern int64_t shr_q_call_count(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
 #ifdef __cplusplus
 }
 
