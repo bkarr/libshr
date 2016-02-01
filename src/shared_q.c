@@ -2854,6 +2854,8 @@ extern sh_status_e shr_q_clean(
 /*
     shr_q_last_empty  -- returns timestamp of last time queue was empty
 
+    Note:  Only updates if there is a registered monitoring process
+
     returns sh_status_e:
 
     SH_OK           on success
