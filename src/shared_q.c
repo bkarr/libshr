@@ -378,12 +378,12 @@ static inline bool set_flag(
     int64_t *array,
     int64_t indicator
 )   {
-    int64_t prev = array[FLAGS];
+    volatile int64_t prev = (volatile int64_t)array[FLAGS];
     while (!(prev & indicator)) {
         if (CAS(&array[FLAGS], &prev, prev | indicator)) {
             return true;
         }
-        prev = array[FLAGS];
+        prev = (volatile int64_t)array[FLAGS];
     }
     return false;
 }
@@ -395,12 +395,12 @@ static bool clear_flag(
     int64_t indicator
 )   {
     int64_t mask = ~indicator;
-    int64_t prev = array[FLAGS];
+    volatile int64_t prev = (volatile int64_t)array[FLAGS];
     while (prev | indicator) {
         if (CAS(&array[FLAGS], &prev, prev & mask)) {
             return true;
         }
-        prev = array[FLAGS];
+        prev = (volatile int64_t)array[FLAGS];
     }
     return false;
 }*/
@@ -528,7 +528,7 @@ static void add_end(
     next_after.low = slot;
 
     while(true) {
-        tail_before = *((DWORD*)&array[tail]);
+        tail_before = *((DWORD * volatile)&array[tail]);
         next = tail_before.low;
         array[slot + 1] = tail_before.high + 1;
         next_after.high = tail_before.high + 1;
@@ -540,7 +540,7 @@ static void add_end(
                 break;
             }
         } else {
-            tail_after = *((DWORD*)&array[next]);
+            tail_after = *((DWORD* volatile)&array[next]);
             DWCAS((DWORD*)&array[tail], &tail_before, tail_after);
         }
     }
@@ -667,8 +667,8 @@ static view_s expand(
             // update allocation values
             after.high = array[SIZE];
             do {
-                before.low = array[NODE_ALLOC];
-                before.high = array[DATA_ALLOC];
+                before.low = (volatile int64_t)array[NODE_ALLOC];
+                before.high = (volatile int64_t)array[DATA_ALLOC];
                 if (before.high == extent->slots) {
                     after.low = before.low;
                 } else {
@@ -884,8 +884,8 @@ static sh_status_e add_to_leaf(
     do {
         array[slot + 1] = leaf->allocs_count;
         array[slot] = leaf->allocs;
-        before.high = array[slot + 1];
-        before.low = array[slot];
+        before.high = (volatile int64_t)array[slot + 1];
+        before.low = (volatile int64_t)array[slot];
         after.high = before.high + 1;
         after.low = slot;
     } while (!DWCAS((DWORD*)&leaf->allocs, &before, after));
@@ -1238,7 +1238,7 @@ static int64_t lookup_freed_data(
         before.high = leaf->allocs_count;
         view = insure_in_range(q, before.low);
         array = view.extent->array;
-        after.low = array[before.low];
+        after.low = (volatile int64_t)array[before.low];
         after.high = before.high + 1;
     } while (before.low != 0 && !DWCAS((DWORD*)&leaf->allocs, &before, after));
     return before.low;
@@ -1461,13 +1461,13 @@ static void update_empty_timestamp(
 )   {
     struct timespec curr_time;
     clock_gettime(CLOCK_REALTIME, &curr_time);
-    struct timespec last = *(struct timespec *)&array[EMPTY_SEC];
+    struct timespec last = *(struct timespec * volatile)&array[EMPTY_SEC];
     DWORD next = {.high = curr_time.tv_sec, .low = curr_time.tv_nsec};
     while (timespeccmp(&curr_time, &last, >)) {
         if (DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
             break;
         }
-        last = *(struct timespec *)&array[EMPTY_SEC];
+        last = *(struct timespec * volatile)&array[EMPTY_SEC];
     }
 }
 
@@ -2784,8 +2784,8 @@ extern sh_status_e shr_q_timelimit(
     next.high = seconds;
     next.low = nanoseconds;
     do {
-        prev.tv_sec = array[LIMIT_SEC];
-        prev.tv_nsec = array[LIMIT_NSEC];
+        prev.tv_sec = (volatile time_t)array[LIMIT_SEC];
+        prev.tv_nsec = (volatile long)array[LIMIT_NSEC];
     } while (!DWCAS((DWORD*)&array[LIMIT_SEC], (DWORD*)&prev, next));
     (void)AFS64(&q->accessors, 1);
     return SH_OK;
