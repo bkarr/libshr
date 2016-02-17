@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.5.0
+Version: 0.6.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -26,6 +26,7 @@ events
 - Configurable performance related events for monitoring
 - Ability to clean items older than a specified time limit from front of queue
 - Can return timestamp for the last time the queue empty if not currently empty
+- Can be configured to discard items that have exceeded time limit
 
 
 #### Working

@@ -389,7 +389,7 @@ static inline bool set_flag(
 }
 
 
-/*
+
 static bool clear_flag(
     int64_t *array,
     int64_t indicator
@@ -403,7 +403,7 @@ static bool clear_flag(
         prev = (volatile int64_t)array[FLAGS];
     }
     return false;
-}*/
+}
 
 
 static sh_status_e init_queue(
@@ -1416,6 +1416,13 @@ static inline bool is_call_monitored(
 }
 
 
+static inline bool is_discard_on_expire(
+    shr_q_s *q
+)   {
+    return (q->current->array[FLAGS] & FLAG_DISCARD_EXPIRED);
+}
+
+
 static bool add_event(
     shr_q_s *q,
     sq_event_e event
@@ -1517,11 +1524,11 @@ static sh_status_e enq(
         bool need_signal = false;
         if (!(array[FLAGS] & FLAG_ACTIVATED)) {
             if (set_flag(array, FLAG_ACTIVATED)) {
-                need_signal = add_event(q, SQ_EVNT_INIT);
+                need_signal |= add_event(q, SQ_EVNT_INIT);
             }
         }
         if (count == 0) {
-            need_signal = add_event(q, SQ_EVNT_NONEMPTY);
+            need_signal |= add_event(q, SQ_EVNT_NONEMPTY);
         }
         if (need_signal) {
             signal_event(q);
@@ -1561,29 +1568,23 @@ static int64_t next_item(
 }
 
 
-static bool timelimit_exceeded(
-    shr_q_s *q,             // pointer to queue
-    int64_t time_secs,      // timestamp seconds
-    int64_t time_nsecs      // timestamp nanoseconds
+static bool item_exceeds_limit(
+    shr_q_s *q,                     // pointer to queue
+    int64_t item_slot,              // array index for item
+    struct timespec *timelimit      // expiration timelimit
 )   {
-    extent_s *extent = q->current;
-    int64_t *array = extent->array;
-
-    if (array[LIMIT_SEC] == 0 && array[LIMIT_NSEC] == 0) {
+    if (q == NULL || item_slot < HDR_END || timelimit == NULL) {
         return false;
     }
-
-    if (time_secs > array[LIMIT_SEC]) {
+    view_s view = insure_in_range(q, item_slot);
+    int64_t *array = view.extent->array;
+    struct timespec curr_time;
+    clock_gettime(CLOCK_REALTIME, &curr_time);
+    struct timespec diff = {0, 0};
+    struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
+    timespecsub(&curr_time, item, &diff);
+    if (timespeccmp(&diff, timelimit, >)) {
         return true;
-    }
-    if (time_secs < array[LIMIT_SEC]) {
-        return false;
-    }
-    if (time_nsecs > array[LIMIT_NSEC]) {
-        return true;
-    }
-    if (time_nsecs < array[LIMIT_NSEC]) {
-        return false;
     }
     return false;
 }
@@ -1653,15 +1654,25 @@ static sq_item_s deq(
         if (is_monitored(q)) {
             bool need_signal = false;
             if (count == 1) {
-                need_signal = add_event(q, SQ_EVNT_EMPTY);
+                need_signal |= add_event(q, SQ_EVNT_EMPTY);
             }
-            if (timelimit_exceeded(q, array[data_slot + TM_SEC],
-                    array[data_slot + TM_NSEC])) {
-                need_signal = add_event(q, SQ_EVNT_TIME);
+            // if (timelimit_exceeded(q, array[data_slot + TM_SEC],
+            //         array[data_slot + TM_NSEC])) {
+            if (item_exceeds_limit(q, data_slot, (struct timespec *)&array[TS_SEC])) {
+                need_signal |= add_event(q, SQ_EVNT_TIME);
             }
             if (need_signal) {
                 signal_event(q);
             }
+        }
+
+        // if (is_discard_on_expire(q) && timelimit_exceeded(q,
+        //     array[data_slot + TM_SEC], array[data_slot + TM_NSEC])) {
+        if (is_discard_on_expire(q) && item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC])) {
+            memset(&item, 0, sizeof(item));
+            free_data_slots(q, data_slot, array[data_slot]);
+            item.status = SH_ERR_EMPTY;
+            break;
         }
 
         free_data_slots(q, data_slot, array[data_slot]);
@@ -1740,27 +1751,6 @@ static void check_level(
     return;
 }
 
-
-static bool item_exceeds_limit(
-    shr_q_s *q,                     // pointer to queue
-    int64_t item_slot,              // array index for item
-    struct timespec *timelimit      // expiration timelimit
-)   {
-    if (q == NULL || item_slot < HDR_END || timelimit == NULL) {
-        return false;
-    }
-    view_s view = insure_in_range(q, item_slot);
-    int64_t *array = view.extent->array;
-    struct timespec curr_time;
-    clock_gettime(CLOCK_REALTIME, &curr_time);
-    struct timespec diff = {0, 0};
-    struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
-    timespecsub(&curr_time, item, &diff);
-    if (timespeccmp(&diff, timelimit, >)) {
-        return true;
-    }
-    return false;
-}
 
 /*==============================================================================
 
@@ -2414,26 +2404,36 @@ extern sq_item_s shr_q_remove(
         return (sq_item_s){.status = SH_ERR_STATE};
     }
 
+    sq_item_s item = {0};
+
     (void)AFA64(&q->accessors, 1);
 
-    while (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
-        if (errno == EAGAIN) {
-            signal_call(q);
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_EMPTY};
+    while (true) {
+        while (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+            if (errno == EAGAIN) {
+                signal_call(q);
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_EMPTY;
+                return item;
+            }
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_STATE;
+                return item;
+            }
         }
-        if (errno == EINVAL) {
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
+
+        item = deq(q, buffer, buff_size);
+
+        while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                return (sq_item_s){.status = SH_ERR_STATE};
+            }
         }
-    }
 
-    sq_item_s item = deq(q, buffer, buff_size);
-
-    while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
-        if (errno == EINVAL) {
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
+        if (item.status != SH_ERR_EMPTY) {
+            break;
         }
     }
 
@@ -2484,38 +2484,47 @@ extern sq_item_s shr_q_remove_wait(
         return (sq_item_s){.status = SH_ERR_STATE};
     }
 
+    sq_item_s item = {0};
+
     (void)AFA64(&q->accessors, 1);
 
-    bool will_block = false;
-    if (q->current->array[CALL_SIGNAL] > 0 &&
-        sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
-        if (errno == EAGAIN) {
-            AFA64(&q->current->array[CALLER_COUNT], 1);
-            will_block = true;
-            signal_call(q);
-        }
-    }
-
-    while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
-        if (errno == EINVAL) {
-            if (will_block) {
-                AFS64(&q->current->array[CALLER_COUNT], 1);
+    while (true) {
+        bool will_block = false;
+        if (q->current->array[CALL_SIGNAL] > 0 &&
+            sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+            if (errno == EAGAIN) {
+                AFA64(&q->current->array[CALLER_COUNT], 1);
+                will_block = true;
+                signal_call(q);
             }
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
         }
-    }
 
-    if (will_block) {
-        AFS64(&q->current->array[CALLER_COUNT], 1);
-    }
+        while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+            if (errno == EINVAL) {
+                if (will_block) {
+                    AFS64(&q->current->array[CALLER_COUNT], 1);
+                }
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_STATE;
+                return item;
+            }
+        }
 
-    sq_item_s item = deq(q, buffer, buff_size);
+        if (will_block) {
+            AFS64(&q->current->array[CALLER_COUNT], 1);
+        }
 
-    while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
-        if (errno == EINVAL) {
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
+        item = deq(q, buffer, buff_size);
+
+        while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                return (sq_item_s){.status = SH_ERR_STATE};
+            }
+        }
+
+        if (item.status != SH_ERR_EMPTY) {
+            break;
         }
     }
 
@@ -2568,48 +2577,59 @@ extern sq_item_s shr_q_remove_timedwait(
     if (!(q->mode & SQ_READ_ONLY)) {
         return (sq_item_s){.status = SH_ERR_STATE};
     }
+
+    sq_item_s item = {0};
+
     (void)AFA64(&q->accessors, 1);
 
-    bool will_block = false;
-    if (q->current->array[CALL_SIGNAL] > 0 &&
-        sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
-        if (errno == EAGAIN) {
-            AFA64(&q->current->array[CALLER_COUNT], 1);
-            will_block = true;
-            signal_call(q);
-        }
-    }
-
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    timespecadd(&ts, timeout, &ts);
-    while (sem_timedwait((sem_t*)&q->current->array[READ_SEM], &ts) < 0) {
-        if (errno == ETIMEDOUT) {
-            if (will_block) {
-                AFS64(&q->current->array[CALLER_COUNT], 1);
+    while (true) {
+        bool will_block = false;
+        if (q->current->array[CALL_SIGNAL] > 0 &&
+            sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+            if (errno == EAGAIN) {
+                AFA64(&q->current->array[CALLER_COUNT], 1);
+                will_block = true;
+                signal_call(q);
             }
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_EMPTY};
         }
-        if (errno == EINVAL) {
-            if (will_block) {
-                AFS64(&q->current->array[CALLER_COUNT], 1);
+
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        timespecadd(&ts, timeout, &ts);
+        while (sem_timedwait((sem_t*)&q->current->array[READ_SEM], &ts) < 0) {
+            if (errno == ETIMEDOUT) {
+                if (will_block) {
+                    AFS64(&q->current->array[CALLER_COUNT], 1);
+                }
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_EMPTY;
+                return item;
             }
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
+            if (errno == EINVAL) {
+                if (will_block) {
+                    AFS64(&q->current->array[CALLER_COUNT], 1);
+                }
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_STATE;
+                return item;
+            }
         }
-    }
 
-    if (will_block) {
-        AFS64(&q->current->array[CALLER_COUNT], 1);
-    }
+        if (will_block) {
+            AFS64(&q->current->array[CALLER_COUNT], 1);
+        }
 
-    sq_item_s item = deq(q, buffer, buff_size);
+        item = deq(q, buffer, buff_size);
 
-    while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
-        if (errno == EINVAL) {
-            (void)AFS64(&q->accessors, 1);
-            return (sq_item_s){.status = SH_ERR_STATE};
+        while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+            if (errno == EINVAL) {
+                (void)AFS64(&q->accessors, 1);
+                return (sq_item_s){.status = SH_ERR_STATE};
+            }
+        }
+
+        if (item.status != SH_ERR_EMPTY) {
+            break;
         }
     }
 
@@ -2781,8 +2801,8 @@ extern sh_status_e shr_q_timelimit(
     int64_t *array = q->current->array;
     struct timespec prev;
     DWORD next;
-    next.high = seconds;
-    next.low = nanoseconds;
+    next.high = nanoseconds;
+    next.low = seconds;
     do {
         prev.tv_sec = (volatile time_t)array[LIMIT_SEC];
         prev.tv_nsec = (volatile long)array[LIMIT_NSEC];
@@ -2883,7 +2903,7 @@ extern sh_status_e shr_q_clean(
 
 
 /*
-    shr_q_last_empty  -- returns timestamp of last time queue was empty
+shr_q_last_empty  -- returns timestamp of last time queue became non-empty
 
     Note:  Only updates if there is a registered monitoring process
 
@@ -2926,6 +2946,56 @@ extern int64_t shr_q_call_count(
     (void)AFA64(&q->accessors, 1);
     int64_t result = -1;
     result = q->current->array[CALLER_COUNT];
+    (void)AFS64(&q->accessors, 1);
+    return result;
+}
+
+
+/*
+    shr_q_discard  -- discard items that exceed expiration time limit
+
+    Note:  default on creation is to NOT discard, even if time limit is set
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_discard(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    bool flag                   // true will cause items to be discarded
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+
+    (void)AFA64(&q->accessors, 1);
+
+    if (flag) {
+        set_flag(q->current->array, FLAG_DISCARD_EXPIRED);
+    } else {
+        clear_flag(q->current->array, FLAG_DISCARD_EXPIRED);
+    }
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_will_discard -- tests to see if queue will discard expired items
+
+    returns true if expired items will be discarded, otherwise false
+*/
+extern bool shr_q_will_discard(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return false;
+    }
+
+    (void)AFA64(&q->accessors, 1);
+    bool result = is_discard_on_expire(q);
     (void)AFS64(&q->accessors, 1);
     return result;
 }
@@ -3506,6 +3576,7 @@ static void test_remove_timedwait_errors(void)
     assert(status == SH_OK);
 }
 
+
 static void test_empty_queue(void)
 {
     sh_status_e status;
@@ -3646,6 +3717,44 @@ static void test_multi_item_queue(void)
     assert(q == NULL);
 }
 
+
+static void test_expiration_discard(void)
+{
+    sh_status_e status;
+    sq_item_s item = {0};
+    shr_q_s *q = NULL;
+    struct timespec sleep = {0, 200000000};
+
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    assert(shr_q_will_discard(q) == false);
+    assert(shr_q_timelimit(q, 0, 50000000) == SH_OK);
+    assert(shr_q_will_discard(q) == false);
+    assert(shr_q_discard(q, true) == SH_OK);
+    assert(shr_q_will_discard(q) == true);
+    status = shr_q_add(q, "test", 4);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 1);
+    nanosleep(&sleep, &sleep);
+    status = shr_q_add(q, "test1", 5);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 2);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test1", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
+
 int main(void)
 {
     set_signal_handlers();
@@ -3685,6 +3794,7 @@ int main(void)
     test_empty_queue();
     test_single_item_queue();
     test_multi_item_queue();
+    test_expiration_discard();
 
     return 0;
 }

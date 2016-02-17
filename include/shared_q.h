@@ -525,7 +525,7 @@ extern sh_status_e shr_q_clean(
 
 
 /*
-    shr_q_last_empty  -- returns timestamp of last time queue was empty
+    shr_q_last_empty  -- returns timestamp of last time queue became non-empty
 
     Note:  Only updates if there is a registered monitoring process
 
@@ -547,6 +547,33 @@ extern sh_status_e shr_q_last_empty(
 
 */
 extern int64_t shr_q_call_count(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+/*
+    shr_q_discard  -- discard items that exceed expiration time limit
+
+    Note:  default on creation is to NOT discard, even if time limit is set
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_discard(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    bool flag                   // true will cause items to be discarded
+);
+
+
+/*
+    shr_q_will_discard -- tests to see if queue will discard expired items
+
+    returns true if expired items will be discarded, otherwise false
+*/
+extern bool shr_q_will_discard(
     shr_q_s *q                  // pointer to queue struct -- not NULL
 );
 
