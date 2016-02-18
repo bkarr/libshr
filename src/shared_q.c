@@ -61,7 +61,7 @@ THE SOFTWARE.
         }                                                   \
     } while(0)
 
-# define timespecsub(a, b, result)                          \
+#define timespecsub(a, b, result)                           \
   do {                                                      \
     (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;           \
     (result)->tv_nsec = (a)->tv_nsec - (b)->tv_nsec;        \
@@ -71,10 +71,10 @@ THE SOFTWARE.
     }                                                       \
   } while (0)
 
-  #define timespeccmp(a, b, cmp)                  \
-      (((a)->tv_sec == (b)->tv_sec) ?             \
-      ((a)->tv_nsec cmp (b)->tv_nsec) :           \
-      ((a)->tv_sec cmp (b)->tv_sec))
+#define timespeccmp(a, b, cmp)                              \
+    (((a)->tv_sec == (b)->tv_sec) ?                         \
+    ((a)->tv_nsec cmp (b)->tv_nsec) :                       \
+    ((a)->tv_sec cmp (b)->tv_sec))
 
 // define useful integer constants (mostly sizes and offsets)
 enum shr_q_constants
@@ -1576,6 +1576,9 @@ static bool item_exceeds_limit(
     if (q == NULL || item_slot < HDR_END || timelimit == NULL) {
         return false;
     }
+    if (timelimit->tv_sec == 0 && timelimit->tv_nsec == 0) {
+        return false;
+    }
     view_s view = insure_in_range(q, item_slot);
     int64_t *array = view.extent->array;
     struct timespec curr_time;
@@ -1656,9 +1659,7 @@ static sq_item_s deq(
             if (count == 1) {
                 need_signal |= add_event(q, SQ_EVNT_EMPTY);
             }
-            // if (timelimit_exceeded(q, array[data_slot + TM_SEC],
-            //         array[data_slot + TM_NSEC])) {
-            if (item_exceeds_limit(q, data_slot, (struct timespec *)&array[TS_SEC])) {
+            if (item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC])) {
                 need_signal |= add_event(q, SQ_EVNT_TIME);
             }
             if (need_signal) {
@@ -1666,8 +1667,6 @@ static sq_item_s deq(
             }
         }
 
-        // if (is_discard_on_expire(q) && timelimit_exceeded(q,
-        //     array[data_slot + TM_SEC], array[data_slot + TM_NSEC])) {
         if (is_discard_on_expire(q) && item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC])) {
             memset(&item, 0, sizeof(item));
             free_data_slots(q, data_slot, array[data_slot]);
@@ -3725,10 +3724,13 @@ static void test_expiration_discard(void)
     shr_q_s *q = NULL;
     struct timespec sleep = {0, 200000000};
 
+    adds = 0;
+    events = 0;
     shm_unlink("testq");
     status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
     assert(status == SH_OK);
     assert(q != NULL);
+    assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
     assert(shr_q_will_discard(q) == false);
     assert(shr_q_timelimit(q, 0, 50000000) == SH_OK);
     assert(shr_q_will_discard(q) == false);
@@ -3737,6 +3739,8 @@ static void test_expiration_discard(void)
     status = shr_q_add(q, "test", 4);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 1);
+    assert(shr_q_event(q) == SQ_EVNT_INIT);
+    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     nanosleep(&sleep, &sleep);
     status = shr_q_add(q, "test1", 5);
     assert(status == SH_OK);
@@ -3749,6 +3753,8 @@ static void test_expiration_discard(void)
     assert(item.value != NULL);
     assert(memcmp(item.value, "test1", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_TIME);
+    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
