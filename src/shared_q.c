@@ -47,8 +47,14 @@ THE SOFTWARE.
 
 // define functional flags
 #define FLAG_ACTIVATED 1
-#define FLAG_DISCARD_EXPIRED 2
+#define FLAG_DISCARD_EXPIRED 2    // discard items that exceed timelimit
 #define FLAG_LIFO_ON_LEVEL 4
+#define FLAG_EVNT_INIT 8          // disable event first item added to queue
+#define FLAG_EVNT_DEPTH 16        // disable event max depth reached
+#define FLAG_EVNT_TIME 32         // disable event max time limit reached
+#define FLAG_EVNT_LEVEL 64        // disable event depth level reached
+#define FLAG_EVNT_EMPTY 128       // disable event last item on queue removed
+#define FLAG_EVNT_NONEMPTY 256    // disable event item added to empty queue
 
 // define useful time related macros
 #define timespecadd(a, b, result)                           \
@@ -1423,6 +1429,40 @@ static inline bool is_discard_on_expire(
 }
 
 
+static int64_t get_event_flag(
+    sq_event_e event
+)   {
+    switch (event) {
+    case SQ_EVNT_ALL:
+        return (FLAG_EVNT_INIT | FLAG_EVNT_DEPTH | FLAG_EVNT_EMPTY |
+            FLAG_EVNT_LEVEL | FLAG_EVNT_NONEMPTY | FLAG_EVNT_TIME);
+    case SQ_EVNT_INIT:
+        return FLAG_EVNT_INIT;
+    case SQ_EVNT_DEPTH:
+        return FLAG_EVNT_DEPTH;
+    case SQ_EVNT_EMPTY:
+        return FLAG_EVNT_EMPTY;
+    case SQ_EVNT_LEVEL:
+        return FLAG_EVNT_LEVEL;
+    case SQ_EVNT_NONEMPTY:
+        return FLAG_EVNT_NONEMPTY;
+    case SQ_EVNT_TIME:
+        return FLAG_EVNT_TIME;
+    default:
+        break;
+    }
+    return 0;
+}
+
+
+static inline bool event_disabled(
+    int64_t *array,
+    sq_event_e event
+)   {
+    return !(array[FLAGS] & get_event_flag(event));
+}
+
+
 static bool add_event(
     shr_q_s *q,
     sq_event_e event
@@ -1430,6 +1470,10 @@ static bool add_event(
     view_s view = {.extent = q->current};
 
     int64_t *array = view.extent->array;
+
+    if (event == SQ_EVNT_NONE || event_disabled(array, event)) {
+        return false;
+    }
 
     if (array[NOTIFY_SIGNAL] == 0 || array[NOTIFY_PID] == 0) {
         return false;
@@ -1654,12 +1698,15 @@ static sq_item_s deq(
 
         int64_t count = AFS64(&array[COUNT], 1);
 
+        bool expired = (is_discard_on_expire(q) || is_monitored(q) ?
+            item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC]) :
+            false);
         if (is_monitored(q)) {
             bool need_signal = false;
             if (count == 1) {
                 need_signal |= add_event(q, SQ_EVNT_EMPTY);
             }
-            if (item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC])) {
+            if (expired) {
                 need_signal |= add_event(q, SQ_EVNT_TIME);
             }
             if (need_signal) {
@@ -1667,7 +1714,7 @@ static sq_item_s deq(
             }
         }
 
-        if (is_discard_on_expire(q) && item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC])) {
+        if (expired && is_discard_on_expire(q)) {
             memset(&item, 0, sizeof(item));
             free_data_slots(q, data_slot, array[data_slot]);
             item.status = SH_ERR_EMPTY;
@@ -3000,6 +3047,84 @@ extern bool shr_q_will_discard(
 }
 
 
+/*
+    shr_q_subscribe  -- enable previously disabled event
+
+    Note:  default on creation is that if there is a monitoring process then
+    all events are disabled and there must be subscription to see them
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_subscribe(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to enable
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+    int64_t flag = get_event_flag(event);
+    (void)AFA64(&q->accessors, 1);
+    if (flag) {
+        set_flag(q->current->array, flag);
+    }
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_unsubscribe  -- disable previously enabled event
+
+    Note:  default on creation is that if there is a monitoring process then
+    all events are disabled and there must be subscription to see them
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_unsubscribe(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to disable
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+    int64_t flag = get_event_flag(event);
+    (void)AFA64(&q->accessors, 1);
+    if (flag) {
+        clear_flag(q->current->array, flag);
+    }
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_is_subscribed -- tests a single event to see if it will be generated
+
+    returns true if event has subscription, otherwise false
+*/
+extern bool shr_q_is_subscribed(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to disable
+)   {
+    if (q == NULL || event == SQ_EVNT_NONE || event == SQ_EVNT_ALL) {
+        return false;
+    }
+
+    (void)AFA64(&q->accessors, 1);
+    bool result = !event_disabled(q->current->array, event);
+    (void)AFS64(&q->accessors, 1);
+    return result;
+}
+
+
 /*==============================================================================
 
     unit tests
@@ -3576,6 +3701,72 @@ static void test_remove_timedwait_errors(void)
 }
 
 
+static void test_subscription(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_TIME));
+    assert(shr_q_subscribe(q, SQ_EVNT_ALL) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_TIME));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_ALL) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_TIME));
+    assert(shr_q_subscribe(q, SQ_EVNT_INIT) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_INIT) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
+    assert(shr_q_subscribe(q, SQ_EVNT_DEPTH) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_DEPTH) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(shr_q_subscribe(q, SQ_EVNT_EMPTY) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_EMPTY) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
+    assert(shr_q_subscribe(q, SQ_EVNT_NONEMPTY) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_NONEMPTY) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
+    assert(shr_q_subscribe(q, SQ_EVNT_LEVEL) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_LEVEL) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
+    assert(shr_q_subscribe(q, SQ_EVNT_TIME) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_TIME));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_TIME) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_TIME));
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
+
 static void test_empty_queue(void)
 {
     sh_status_e status;
@@ -3606,6 +3797,7 @@ static void test_empty_queue(void)
     assert(q == NULL);
 }
 
+
 static void test_single_item_queue(void)
 {
     sh_status_e status;
@@ -3618,6 +3810,7 @@ static void test_single_item_queue(void)
     status = shr_q_create(&q, "testq", 1, SQ_READWRITE);
     assert(status == SH_OK);
     assert(q != NULL);
+    assert(shr_q_subscribe(q, SQ_EVNT_ALL) == SH_OK);
     assert(shr_q_listen(q, SIGUSR1) == SH_OK);
     assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
     assert(shr_q_add(q, "test", 4) == SH_OK);
@@ -3668,6 +3861,7 @@ static void test_multi_item_queue(void)
     status = shr_q_create(&q, "testq", 2, SQ_READWRITE);
     assert(status == SH_OK);
     assert(q != NULL);
+    assert(shr_q_subscribe(q, SQ_EVNT_ALL) == SH_OK);
     assert(shr_q_listen(q, SIGUSR1) == SH_OK);
     assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
     assert(shr_q_add(q, "test1", 5) == SH_OK);
@@ -3730,6 +3924,7 @@ static void test_expiration_discard(void)
     status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
     assert(status == SH_OK);
     assert(q != NULL);
+    assert(shr_q_subscribe(q, SQ_EVNT_TIME) == SH_OK);
     assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
     assert(shr_q_will_discard(q) == false);
     assert(shr_q_timelimit(q, 0, 50000000) == SH_OK);
@@ -3739,8 +3934,6 @@ static void test_expiration_discard(void)
     status = shr_q_add(q, "test", 4);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 1);
-    assert(shr_q_event(q) == SQ_EVNT_INIT);
-    assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     nanosleep(&sleep, &sleep);
     status = shr_q_add(q, "test1", 5);
     assert(status == SH_OK);
@@ -3754,7 +3947,6 @@ static void test_expiration_discard(void)
     assert(memcmp(item.value, "test1", item.length) == 0);
     assert(shr_q_count(q) == 0);
     assert(shr_q_event(q) == SQ_EVNT_TIME);
-    assert(shr_q_event(q) == SQ_EVNT_EMPTY);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
@@ -3797,6 +3989,7 @@ int main(void)
     /*
         Test behaviors
     */
+    test_subscription();
     test_empty_queue();
     test_single_item_queue();
     test_multi_item_queue();

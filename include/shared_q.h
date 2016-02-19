@@ -81,7 +81,8 @@ typedef struct shr_q shr_q_s;
 
 typedef enum
 {
-    SQ_EVNT_NONE,           // non-event
+    SQ_EVNT_ALL = 0,        // not an event, used to simplify subscription
+    SQ_EVNT_NONE = 0,       // non-event
     SQ_EVNT_INIT,           // first item added to queue
     SQ_EVNT_DEPTH,          // max depth reached
     SQ_EVNT_TIME,           // max time limit reached
@@ -575,6 +576,53 @@ extern sh_status_e shr_q_discard(
 */
 extern bool shr_q_will_discard(
     shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+/*
+    shr_q_subscribe  -- enable previously disabled event
+
+    Note:  default on creation is that if there is a monitoring process then
+    all events are disabled and there must be subscription to see them
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_subscribe(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to enable
+);
+
+
+/*
+    shr_q_unsubscribe  -- disable previously enabled event
+
+    Note:  default on creation is that if there is a monitoring process then
+    all events are disabled and there must be subscription to see them
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_unsubscribe(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to disable
+);
+
+
+/*
+    shr_q_is_subscribed -- tests to see if event will be generated
+
+    returns true if event has subscription, otherwise false
+*/
+extern bool shr_q_is_subscribed(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    sq_event_e event            // event to disable
 );
 
 
