@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.7.0
+Version: 0.8.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -20,7 +20,7 @@ maximum
 - Number of queues limited only by number of open files per process
 - Separate process listener for arrivals on empty queue versus other monitoring
 events
-- Separate process listener for remove calls blocking on an empty queue and also return number of blocked callers to enable pull processing
+- Separate process listener for remove calls blocking on an empty queue
 - Event for very initial add, as well as, an add to empty queue
 - Event for queue removal producing an empty queue
 - Configurable performance related events for monitoring
@@ -65,16 +65,14 @@ Performance/stress test:
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
     input SUM[0..100000]=5000050000 output=5000050000
     time:  0.1033
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 550000
-    input SUM[0..2200000]=2420001100000 output=2420001100000
-    time:  0.9888
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 630000
+    input SUM[0..2520000]=3175201260000 output=3175201260000
+    time:  0.9839
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 6300000
+    input SUM[0..25200000]=317520012600000 output=317520012600000
+    time:  9.6875
 
-
-
-
- Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the
- harness can write to and read from the queue at a rate of 2.2 million items
- per second.
+ Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the harness can write to and read from the queue at a rate of more 2.5 million items per second.
 
 ## Install
     ~/libshr $ sudo make install

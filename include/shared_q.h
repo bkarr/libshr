@@ -544,15 +544,6 @@ extern sh_status_e shr_q_last_empty(
 
 
 /*
-    shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
-
-*/
-extern int64_t shr_q_call_count(
-    shr_q_s *q                  // pointer to queue struct -- not NULL
-);
-
-
-/*
     shr_q_discard  -- discard items that exceed expiration time limit
 
     Note:  default on creation is to NOT discard, even if time limit is set

@@ -1000,8 +1000,7 @@ void sharedq_call(int argc, char *argv[], int index)
             }
             break;
         }
-        printf("Attempted remove from empty queue %s with %li blocked callers\n",
-            argv[index + 1], shr_q_call_count(q));
+        printf("Attempted remove from empty queue %s\n", argv[index + 1]);
     }
 
     shr_q_close(&q);
