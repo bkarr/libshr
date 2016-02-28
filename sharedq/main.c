@@ -30,12 +30,14 @@ THE SOFTWARE.
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/limits.h>
+#include <poll.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/signalfd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -47,6 +49,16 @@ THE SOFTWARE.
 #define HEX_HDR_SPAN 256
 #define SHR_OBJ_DIR "/dev/shm/"
 #define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+#define timespecsub(a, b, result)                           \
+  do {                                                      \
+    (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;           \
+    (result)->tv_nsec = (a)->tv_nsec - (b)->tv_nsec;        \
+    if ((result)->tv_nsec < 0) {                            \
+      --(result)->tv_sec;                                   \
+      (result)->tv_nsec += 1000000000;                      \
+    }                                                       \
+  } while (0)
 
 typedef void (*cmd_f)(int argc, char *argv[], int index);
 
@@ -70,6 +82,7 @@ char *cmd_str[] = {
     "level",
     "limit",
     "call",
+    "pull"
 };
 
 typedef enum cmd_codes {
@@ -85,6 +98,7 @@ typedef enum cmd_codes {
     LEVEL,
     LIMIT,
     CALL,
+    PULL,
     CODE_MAX
 } cmd_code_e;
 
@@ -159,6 +173,7 @@ void sharedq_help_drain()
     printf("  -----------\t\t---------\n");
     printf("  -b\t\t\tblocks waiting for an item to arrive\n");
     printf("  -h\t\t\tprints help for the specified command\n");
+    printf("  -v\t\t\tprints output with timing information\n");
     printf("  -x\t\t\tprints output as hex dump\n");
 }
 
@@ -220,6 +235,21 @@ void sharedq_help_limit()
 }
 
 
+void sharedq_help_pull()
+{
+    printf("sharedq [modifiers] pull <name> [<file>]\n");
+    printf("\n  --adds lines to the specified queue based on call signals\n");
+    printf("\n  where:\n");
+    printf("  <name>\t\tname of queue\n");
+    printf("  <file>  \t\tname of file whose contents to queue,\n");
+    printf("  \t\t\tif omitted queue lines from stdin\n");
+    printf("\n   modifiers\t\t effects\n");
+    printf("  -----------\t\t---------\n");
+    printf("  -h\t\t\tprints help for the specified command\n");
+    printf("  -v\t\t\tprints output with timing information\n");
+}
+
+
 void sharedq_help(int argc, char *argv[], int index)
 {
     printf("sharedq [modifiers] <cmd>\n");
@@ -237,6 +267,7 @@ void sharedq_help(int argc, char *argv[], int index)
     printf("  remove\t\tremove item from queue\n");
     printf("  listen\t\tlisten for add to empty queue\n");
     printf("  call\t\t\tcall when there are removes on empty queue\n");
+    printf("  pull\t\t\tdemo of pull model based on call signal\n");
     printf("\n   modifiers\t\t effects\n");
     printf("  -----------\t\t---------\n");
     printf("  -b\t\t\tblocks waiting for an item to arrive\n");
@@ -566,6 +597,7 @@ void queue_from_stdin(
     shr_q_s *q
 )   {
     char *line = NULL;
+    puts("<--");
     while((line = readline(stdin, line)) != NULL) {
         if (strlen(line) == 0) {
             free(line);
@@ -587,6 +619,7 @@ void queue_from_stdin(
             free(line);
             return;
         }
+        puts("<--");
     }
 }
 
@@ -762,7 +795,7 @@ void sharedq_drain(int argc, char *argv[], int index)
         return;
     }
 
-    modifiers_s param = parse_modifiers(argc, argv, index, "bhx");
+    modifiers_s param = parse_modifiers(argc, argv, index, "bhvx");
 
     if (param.help)
     {
@@ -792,25 +825,64 @@ void sharedq_drain(int argc, char *argv[], int index)
         return;
     }
 
+    pid_t pid = getpid();
+
     sq_item_s item = {0};
 
+    struct timespec itm_intrvl;
+    struct timespec call_intrvl;
+    struct timespec call_start;
+    struct timespec call_end;
     do {
+        clock_gettime(CLOCK_REALTIME, &call_start);
         if (param.block) {
             item = shr_q_remove_wait(q, &item.buffer, &item.buf_size);
         } else {
             item = shr_q_remove(q, &item.buffer, &item.buf_size);
         }
+        clock_gettime(CLOCK_REALTIME, &call_end);
         if (item.status == SH_ERR_ARG) {
             printf("sharedq:  invalid argument for remove function\n");
         } else if (item.status == SH_ERR_EMPTY) {
+            if (param.block) {
+                item.status = SH_OK;
+            }
             printf("sharedq:  queue is empty\n");
         } else if (item.status == SH_ERR_NOMEM) {
             printf("sharedq:  not enough memory to complete remove\n");
-        } else {
+        } else if (item.status == SH_OK) {
+            timespecsub(&call_end, &call_start, &call_intrvl);
             if (param.hex) {
                 hex_format(item.value, item.length);
             } else {
-                printf("%s\n", (char *)item.value);
+                timespecsub(&call_end, item.timestamp, &itm_intrvl);
+                if (param.verbose) {
+                    printf("%li.%09li--(%i)--%li.%09li--%li.%09li-->%s\n",
+                        call_end.tv_sec, call_end.tv_nsec, pid,
+                        itm_intrvl.tv_sec, itm_intrvl.tv_nsec,
+                        call_intrvl.tv_sec, call_intrvl.tv_nsec,
+                        (char *)item.value);
+                } else {
+                    printf("-->%s\n", (char *)item.value);
+                }
+            }
+            if (param.block) {
+                clock_gettime(CLOCK_REALTIME, &call_start);
+                if (param.verbose) {
+                    printf("%li.%09li--(%i) sleeping \n", call_start.tv_sec,
+                        call_start.tv_nsec, pid);
+                }
+                struct timespec nano = {.tv_sec = 1, .tv_nsec = 0};
+                while(nanosleep(&nano, &nano) < 0) {
+                    if (errno != EINTR) {
+                        break;
+                    }
+                }
+                clock_gettime(CLOCK_REALTIME, &call_start);
+                if (param.verbose) {
+                    printf("%li.%09li--(%i) waking \n", call_start.tv_sec,
+                        call_start.tv_nsec, pid);
+                }
             }
         }
     } while (item.status == SH_OK);
@@ -1121,6 +1193,236 @@ void sharedq_limit(int argc, char *argv[], int index)
 }
 
 
+void pull_from_file(
+    shr_q_s *q,
+    char *fname,
+    int fd,
+    modifiers_s *param
+)   {
+    struct stat st;
+    int rc = stat(fname, &st);
+    if (rc < 0) {
+        printf("sharedq: invalid file\n");
+        return;
+    }
+
+    if (!S_ISREG(st.st_mode)) {
+        printf("sharedq: not a regular file\n");
+        return;
+    }
+
+    FILE *in = fopen(fname, "r");
+    if (in == NULL) {
+        printf("sharedq: unable to open file for pull\n");
+        return;
+    }
+
+    char *line = NULL;
+    size_t ln_count = 0;
+    int64_t blockers = shr_q_call_count(q);
+    printf("%li blocked callers\n", blockers);
+    struct timespec start;
+    clock_gettime(CLOCK_REALTIME, &start);
+
+    for (int i = 0; i < blockers; i++) {
+        int rc = getline(&line, &ln_count, in);
+        if (rc <= 0) {
+            break;
+        }
+        sh_status_e status = shr_q_add(q, line, rc - 1);
+        if (status == SH_ERR_ARG) {
+            printf("sharedq:  invalid argument for add function\n");
+        }
+        if (status == SH_ERR_LIMIT) {
+            printf("sharedq:  queue at depth limit\n");
+        }
+        if (status == SH_ERR_NOMEM) {
+            printf("sharedq:  not enough memory to complete add\n");
+        }
+    }
+
+    bool empty = false;
+    int num = 0;
+    struct signalfd_siginfo fd_si;
+    struct timespec call_start;
+    struct timespec call_end;
+    struct timespec call_intrvl;
+    while (true) {
+        blockers = 0;
+        clock_gettime(CLOCK_REALTIME, &call_start);
+        ssize_t sz = read(fd, &fd_si, sizeof(struct signalfd_siginfo));
+        clock_gettime(CLOCK_REALTIME, &call_end);
+        if (sz != sizeof(struct signalfd_siginfo)) {
+            printf("sharedq:  read error on signal fd\n");
+            return;
+        }
+
+        if (empty) {
+            break;
+        }
+
+        timespecsub(&call_end, &call_start, &call_intrvl);
+        if (param->verbose) {
+            printf("%li.%09li<--call %i from (%i)  wait time:  %li.%09li\n",
+                call_end.tv_sec, call_end.tv_nsec, ++num, fd_si.ssi_pid,
+                call_intrvl.tv_sec, call_intrvl.tv_nsec);
+        } else {
+            printf("<--call %i\n", ++num);
+        }
+
+        if (empty) {
+            break;
+        }
+
+        int rc = getline(&line, &ln_count, in);
+        if (rc <= 0) {
+            empty = true;
+            break;
+        }
+        sh_status_e status = shr_q_add(q, line, rc - 1);
+        if (status == SH_ERR_ARG) {
+            printf("sharedq:  invalid argument for add function\n");
+        }
+        if (status == SH_ERR_LIMIT) {
+            printf("sharedq:  queue at depth limit\n");
+        }
+        if (status == SH_ERR_NOMEM) {
+            printf("sharedq:  not enough memory to complete add\n");
+        }
+    }
+
+    struct timespec end;
+    clock_gettime(CLOCK_REALTIME, &end);
+    timespecsub(&end, &start, &end);
+    printf("time to pull data %li.%09li seconds\n", end.tv_sec, end.tv_nsec);
+
+    if (line) {
+        free(line);
+    }
+    fclose(in);
+}
+
+
+void pull_from_stdin(
+    shr_q_s *q,
+    int fd
+)   {
+    struct signalfd_siginfo fd_si;
+    char *line = NULL;
+
+    int64_t blockers = shr_q_call_count(q);
+    for (int i = 0; i < blockers; i++) {
+        if (shr_q_prod(q) != SH_OK) {
+            printf("sharedq:  unable to prod pull process\n");
+            return;
+        }
+    }
+
+
+    while (true) {
+        ssize_t sz = read(fd, &fd_si, sizeof(struct signalfd_siginfo));
+        if (sz != sizeof(struct signalfd_siginfo)) {
+            printf("sharedq:  read error on signal fd\n");
+            return;
+        }
+        puts("<--");
+        line = readline(stdin, line);
+        if (line == NULL) {
+            break;
+        }
+        if (strlen(line) == 0) {
+            free(line);
+            break;
+        }
+        sh_status_e status = shr_q_add(q, line, strlen(line));
+        if (status == SH_ERR_ARG) {
+            printf("sharedq:  invalid argument for add function\n");
+            free(line);
+            return;
+        }
+        if (status == SH_ERR_LIMIT) {
+            printf("sharedq:  queue at depth limit\n");
+            free(line);
+            return;
+        }
+        if (status == SH_ERR_NOMEM) {
+            printf("sharedq:  not enough memory to complete add\n");
+            free(line);
+            return;
+        }
+    }
+}
+
+
+void sharedq_pull(int argc, char *argv[], int index)
+{
+    if ((argc - index + 1) < 3 || (argc - index + 1) > 4) {
+        sharedq_help_pull();
+        return;
+    }
+
+    modifiers_s param = parse_modifiers(argc, argv, index, "hv");
+
+
+    if (param.help) {
+        sharedq_help_pull();
+        return;
+    }
+
+    sigset_t mask;
+    int fd;
+
+    // set up signalfd
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGRTMIN + 1);
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
+        printf("sharedq:  unable to set signal mask to block\n");
+        return;
+    }
+    fd = signalfd(-1, &mask, 0);
+    if (fd == -1) {
+        printf("sharedq:  unable to create signal fd\n");
+        return;
+    }
+
+    shr_q_s *q = NULL;
+    sh_status_e status = shr_q_open(&q, argv[index + 1], SQ_WRITE_ONLY);
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for open function\n");
+        return;
+    }
+    if (status == SH_ERR_ACCESS) {
+        printf("sharedq:  permission error for queue name\n");
+        return;
+    }
+    if (status == SH_ERR_EXIST) {
+        printf("sharedq:  queue name does not exist\n");
+        return;
+    }
+    if (status == SH_ERR_PATH) {
+        printf("sharedq:  error in queue name path\n");
+        return;
+    }
+    if (status == SH_ERR_SYS) {
+        printf("sharedq:  system call error\n");
+        return;
+    }
+    status = shr_q_call(q, SIGRTMIN + 1);
+    if (status != SH_OK) {
+        printf("sharedq:  unable to register call signal\n");
+        return;
+    }
+
+    if ((argc - index + 1) == 4) {
+        pull_from_file(q, argv[index + 2], fd, &param);
+    } else {
+        pull_from_stdin(q, fd);
+    }
+
+    shr_q_close(&q);
+}
+
+
 cmd_f cmds[] = {
     sharedq_help,
     sharedq_create,
@@ -1134,6 +1436,7 @@ cmd_f cmds[] = {
     sharedq_level,
     sharedq_limit,
     sharedq_call,
+    sharedq_pull,
 };
 
 

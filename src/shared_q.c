@@ -134,10 +134,12 @@ enum shr_q_disp
     IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
     CALL_PID = (IO_SEM +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
+    CALL_BLOCKS,                     // count of blocked remove calls
+    CALL_UNBLOCKS,                   // count of unblocked remove calls
     FLAGS,                          // configuration flag values
     LEVEL,                          // queue depth event level
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 18),         // end of queue header
+    HDR_END = (AVAIL + 16),         // end of queue header
 };
 
 
@@ -1581,7 +1583,7 @@ static sh_status_e enq(
     }
     signal_arrival(q);
 
-
+    // update last add timestamp
     struct timespec prev_time = *(struct timespec*)&array[TS_SEC];
     DWCAS((DWORD*)&array[TS_SEC], (DWORD*)&prev_time, curr_time);
 
@@ -1651,7 +1653,7 @@ static sq_item_s deq(
         int64_t gen = array[HEAD_CNT];
         int64_t head = array[HEAD];
         if (head == array[TAIL]) {
-            continue;
+            break;
         }
         view = insure_in_range(q, head);
         array = view.extent->array;
@@ -1718,7 +1720,7 @@ static sq_item_s deq(
         if (expired && is_discard_on_expire(q)) {
             memset(&item, 0, sizeof(item));
             free_data_slots(q, data_slot, array[data_slot]);
-            item.status = SH_ERR_EMPTY;
+            item.status = SH_ERR_EXIST;
             break;
         }
 
@@ -2266,6 +2268,11 @@ extern sh_status_e shr_q_add(
 
     sh_status_e status = enq(q, value, length);
 
+    if (status != SH_OK) {
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
+
     while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             status = SH_ERR_STATE;
@@ -2324,6 +2331,11 @@ extern sh_status_e shr_q_add_wait(
     }
 
     sh_status_e status = enq(q, value, length);
+
+    if (status != SH_OK) {
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
 
     while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
@@ -2392,6 +2404,11 @@ extern sh_status_e shr_q_add_timedwait(
     }
 
     sh_status_e status = enq(q, value, length);
+
+    if (status != SH_OK) {
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
 
     while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
@@ -2474,6 +2491,10 @@ extern sq_item_s shr_q_remove(
 
         item = deq(q, buffer, buff_size);
 
+        if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            break;
+        }
+
         while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
             if (errno == EINVAL) {
                 (void)AFS64(&q->accessors, 1);
@@ -2481,7 +2502,7 @@ extern sq_item_s shr_q_remove(
             }
         }
 
-        if (item.status != SH_ERR_EMPTY) {
+        if (item.status == SH_OK) {
             break;
         }
     }
@@ -2538,28 +2559,24 @@ extern sq_item_s shr_q_remove_wait(
     (void)AFA64(&q->accessors, 1);
 
     while (true) {
-        if (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        (void)AFA64(&q->current->array[CALL_BLOCKS], 1);
+        if (is_call_monitored(q)) {
+            signal_call(q);
+        }
+        while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
             if (errno == EINVAL) {
                 (void)AFS64(&q->accessors, 1);
                 item.status = SH_ERR_STATE;
                 return item;
             }
-            if (errno == EAGAIN) {
-                if (is_call_monitored(q)) {
-                    signal_call(q);
-                }
-                while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
-                    if (errno == EINVAL) {
-                        (void)AFS64(&q->accessors, 1);
-                        item.status = SH_ERR_STATE;
-                        return item;
-                    }
-                }
-            }
         }
-
+        (void)AFA64(&q->current->array[CALL_UNBLOCKS], 1);
 
         item = deq(q, buffer, buff_size);
+
+        if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            break;
+        }
 
         while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
             if (errno == EINVAL) {
@@ -2568,7 +2585,7 @@ extern sq_item_s shr_q_remove_wait(
             }
         }
 
-        if (item.status != SH_ERR_EMPTY) {
+        if (item.status == SH_OK) {
             break;
         }
     }
@@ -2628,36 +2645,33 @@ extern sq_item_s shr_q_remove_timedwait(
     (void)AFA64(&q->accessors, 1);
 
     while (true) {
-        if (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        (void)AFA64(&q->current->array[CALL_BLOCKS], 1);
+        if (is_call_monitored(q)) {
+            signal_call(q);
+        }
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        timespecadd(&ts, timeout, &ts);
+        while (sem_timedwait((sem_t*)&q->current->array[READ_SEM], &ts) < 0) {
+            if (errno == ETIMEDOUT) {
+                (void)AFA64(&q->current->array[CALL_UNBLOCKS], 1);
+                (void)AFS64(&q->accessors, 1);
+                item.status = SH_ERR_EMPTY;
+                return item;
+            }
             if (errno == EINVAL) {
                 (void)AFS64(&q->accessors, 1);
                 item.status = SH_ERR_STATE;
                 return item;
             }
-            if (errno == EAGAIN) {
-                if (is_call_monitored(q)) {
-                    signal_call(q);
-                }
-                struct timespec ts;
-                clock_gettime(CLOCK_REALTIME, &ts);
-                timespecadd(&ts, timeout, &ts);
-                while (sem_timedwait((sem_t*)&q->current->array[READ_SEM], &ts) < 0) {
-                    if (errno == ETIMEDOUT) {
-                        (void)AFS64(&q->accessors, 1);
-                        item.status = SH_ERR_EMPTY;
-                        return item;
-                    }
-                    if (errno == EINVAL) {
-                        (void)AFS64(&q->accessors, 1);
-                        item.status = SH_ERR_STATE;
-                        return item;
-                    }
-                }
-            }
         }
-
+        (void)AFA64(&q->current->array[CALL_UNBLOCKS], 1);
 
         item = deq(q, buffer, buff_size);
+
+        if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            break;
+        }
 
         while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
             if (errno == EINVAL) {
@@ -2666,7 +2680,7 @@ extern sq_item_s shr_q_remove_timedwait(
             }
         }
 
-        if (item.status != SH_ERR_EMPTY) {
+        if (item.status == SH_OK) {
             break;
         }
     }
@@ -3096,6 +3110,49 @@ extern bool shr_q_is_subscribed(
     bool result = !event_disabled(q->current->array, event);
     (void)AFS64(&q->accessors, 1);
     return result;
+}
+
+
+/*
+    shr_q_prod -- activates at least one blocked caller if there are blocked
+                  remove calls
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+    SH_ERR_STATE    if q is immutable or read only or q corrupted
+*/
+extern sh_status_e shr_q_prod(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+    (void)AFA64(&q->accessors, 1);
+    while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+    (void)AFS64(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
+
+*/
+extern int64_t shr_q_call_count(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return -1;
+    }
+    int64_t unblocks = q->current->array[CALL_UNBLOCKS];
+    return q->current->array[CALL_BLOCKS] - unblocks;
 }
 
 

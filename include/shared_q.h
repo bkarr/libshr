@@ -617,6 +617,29 @@ extern bool shr_q_is_subscribed(
 );
 
 
+/*
+    shr_q_prod -- activates at least one blocked caller
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+    SH_ERR_STATE    if q is immutable or read only or q corrupted
+*/
+extern sh_status_e shr_q_prod(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+/*
+    shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
+
+*/
+extern int64_t shr_q_call_count(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
 #ifdef __cplusplus
 }
 

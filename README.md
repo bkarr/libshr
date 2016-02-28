@@ -14,6 +14,7 @@ for interprocess communications.
 
 #### Features of shared_q relative to POSIX IPC queue
 - Size of queued item not limited to a preset maximum
+- Does not have message priority levels, would use multiple queues instead
 - Total size of queue memory limited by system file size limit
 - Number of items on queue configurable and maximum governed by semaphore count
 maximum
@@ -27,6 +28,7 @@ events
 - Ability to clean items older than a specified time limit from front of queue
 - Can return time stamp for the last time the queue empty if not currently empty
 - Can be configured to discard items that have exceeded time limit
+- Blocked calls can use real time signal for demand calls to implement pull processing model
 
 
 #### Working
@@ -72,7 +74,7 @@ Performance/stress test:
     input SUM[0..25200000]=317520012600000 output=317520012600000
     time:  9.6875
 
- Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the harness can write to and read from the queue at a rate of more 2.5 million items per second.
+ Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, the harness can write to and read from the queue at a rate of more than 2.5 million items per second.
 
 ## Install
     ~/libshr $ sudo make install
