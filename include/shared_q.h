@@ -640,6 +640,24 @@ extern int64_t shr_q_call_count(
 );
 
 
+/*
+shr_q_target_delay -- sets target delay and activates CoDel algorithm
+
+Note: will automatically set discard items on expiration
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_target_delay(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    time_t seconds,             // delay number of seconds
+    long nanoseconds            // delay number of nanoseconds
+);
+
+
 #ifdef __cplusplus
 }
 

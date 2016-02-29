@@ -125,8 +125,8 @@ enum shr_q_disp
     FREE_TL_CNT,                    // free node tail counter
     EMPTY_SEC,                      // time q last empty in seconds
     EMPTY_NSEC,                     // time q last empty in nanoseconds
-    LIMIT_SEC,                      // time limit in seconds
-    LIMIT_NSEC,                     // time limit in nanoseconds
+    LIMIT_SEC,                      // time limit interval in seconds
+    LIMIT_NSEC,                     // time limit interval in nanoseconds
     NOTIFY_PID,                     // event notification process id
     NOTIFY_SIGNAL,                  // event notification signal
     READ_SEM,                       // read semaphore
@@ -134,12 +134,14 @@ enum shr_q_disp
     IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
     CALL_PID = (IO_SEM +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
-    CALL_BLOCKS,                     // count of blocked remove calls
-    CALL_UNBLOCKS,                   // count of unblocked remove calls
+    CALL_BLOCKS,                    // count of blocked remove calls
+    CALL_UNBLOCKS,                  // count of unblocked remove calls
+    TARGET_SEC,                     // target CoDel delay in seconds
+    TARGET_NSEC,                    // target CoDel time limit in nanoseconds
     FLAGS,                          // configuration flag values
     LEVEL,                          // queue depth event level
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 16),         // end of queue header
+    HDR_END = (AVAIL + 14),         // end of queue header
 };
 
 
@@ -1432,6 +1434,14 @@ static inline bool is_discard_on_expire(
 }
 
 
+static inline bool is_codel_active(
+    shr_q_s *q
+)   {
+    return ((q->current->array[TARGET_NSEC] || q->current->array[TARGET_SEC]) &&
+    (q->current->array[LIMIT_NSEC] || q->current->array[LIMIT_NSEC]));
+}
+
+
 static int64_t get_event_flag(
     sq_event_e event
 )   {
@@ -1639,6 +1649,42 @@ static bool item_exceeds_limit(
     return false;
 }
 
+static bool item_exceeds_delay(
+    shr_q_s *q,                     // pointer to queue
+    int64_t count,                  // count of items on queue
+    int64_t item_slot,              // array index for item
+    int64_t *array                  // array to access
+)   {
+    if (count > 1 && is_codel_active(q)) {
+        struct timespec intrvl = {0};
+        struct timespec last = *(struct timespec*)&array[EMPTY_SEC];
+        if (last.tv_sec == 0) {
+            return item_exceeds_limit(q, item_slot,
+                (struct timespec*)&array[LIMIT_SEC]);
+        }
+        struct timespec current;
+        clock_gettime(CLOCK_REALTIME, &current);
+        timespecsub(&current, (struct timespec*)&array[LIMIT_SEC], &intrvl);
+        if (timespeccmp(&last, &intrvl, <)) {
+            return item_exceeds_limit(q, item_slot,
+                (struct timespec*)&array[TARGET_SEC]);
+        }
+    }
+    return item_exceeds_limit(q, item_slot, (struct timespec*)&array[LIMIT_SEC]);
+}
+
+
+static void clear_empty_timestamp(
+    int64_t *array      // active q array
+)   {
+    volatile struct timespec last =
+        *(struct timespec * volatile)&array[EMPTY_SEC];
+    DWORD next = {.high = 0, .low = 0};
+    while (!DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
+        last = *(struct timespec * volatile)&array[EMPTY_SEC];
+    }
+}
+
 
 static sq_item_s deq(
     shr_q_s *q,         // pointer to queue
@@ -1701,9 +1747,12 @@ static sq_item_s deq(
 
         int64_t count = AFS64(&array[COUNT], 1);
 
+        if (is_codel_active(q) && count == 1) {
+            clear_empty_timestamp(array);
+        }
+
         bool expired = (is_discard_on_expire(q) || is_monitored(q) ?
-            item_exceeds_limit(q, data_slot, (struct timespec *)&array[LIMIT_SEC]) :
-            false);
+            item_exceeds_delay(q, count, data_slot, array) : false);
         if (is_monitored(q)) {
             bool need_signal = false;
             if (count == 1) {
@@ -3156,6 +3205,41 @@ extern int64_t shr_q_call_count(
 }
 
 
+/*
+    shr_q_target_delay -- sets target delay and activates CoDel algorithm
+
+    Note: will automatically set discard items on expiration
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_target_delay(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    time_t seconds,             // delay number of seconds
+    long nanoseconds            // delay number of nanoseconds
+) {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t *array = q->current->array;
+    struct timespec prev;
+    DWORD next;
+    next.high = nanoseconds;
+    next.low = seconds;
+    do {
+        prev.tv_sec = (volatile time_t)array[TARGET_SEC];
+        prev.tv_nsec = (volatile long)array[TARGET_NSEC];
+    } while (!DWCAS((DWORD*)&array[TARGET_SEC], (DWORD*)&prev, next));
+    (void)AFS64(&q->accessors, 1);
+    return shr_q_discard(q, true);
+}
+
+
 /*==============================================================================
 
     unit tests
@@ -3330,7 +3414,11 @@ static void test_clean(void)
     status = shr_q_add(q, "test", 4);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 1);
-    nanosleep(&sleep, &sleep);
+    while (nanosleep(&sleep, &sleep) < 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
     assert(shr_q_clean(NULL, &limit) == SH_ERR_ARG);
     assert(shr_q_clean(q, NULL) == SH_ERR_ARG);
     assert(shr_q_clean(q, &limit) == SH_OK);
@@ -3340,7 +3428,11 @@ static void test_clean(void)
     status = shr_q_add(q, "test2", 5);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 2);
-    nanosleep(&sleep, &sleep);
+    while (nanosleep(&sleep, &sleep) < 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
     assert(shr_q_clean(q, &max) == SH_OK);
     assert(shr_q_count(q) == 2);
     assert(shr_q_clean(q, &limit) == SH_OK);
@@ -3965,7 +4057,11 @@ static void test_expiration_discard(void)
     status = shr_q_add(q, "test", 4);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 1);
-    nanosleep(&sleep, &sleep);
+    while (nanosleep(&sleep, &sleep) < 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
     status = shr_q_add(q, "test1", 5);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 2);
@@ -3976,6 +4072,52 @@ static void test_expiration_discard(void)
     assert(item.length == 5);
     assert(item.value != NULL);
     assert(memcmp(item.value, "test1", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_TIME);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
+
+static void test_codel_algorithm(void)
+{
+    sh_status_e status;
+    sq_item_s item = {0};
+    shr_q_s *q = NULL;
+    struct timespec sleep = {0, 100000000};
+
+    adds = 0;
+    events = 0;
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    assert(shr_q_subscribe(q, SQ_EVNT_TIME) == SH_OK);
+    assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
+    assert(shr_q_will_discard(q) == false);
+    assert(shr_q_timelimit(q, 0, 100000000) == SH_OK);
+    assert(shr_q_target_delay(q, 0, 50000000) == SH_OK);
+    assert(shr_q_will_discard(q) == true);
+    status = shr_q_add(q, "test", 4);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 1);
+    while (nanosleep(&sleep, &sleep) < 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
+    status = shr_q_add(q, "test1", 5);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 2);
+    // sleep.tv_nsec = 20000000;
+    while (nanosleep(&sleep, &sleep) < 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_ERR_EMPTY);
     assert(shr_q_count(q) == 0);
     assert(shr_q_event(q) == SQ_EVNT_TIME);
     status = shr_q_destroy(&q);
@@ -4025,6 +4167,7 @@ int main(void)
     test_single_item_queue();
     test_multi_item_queue();
     test_expiration_discard();
+    test_codel_algorithm();
 
     return 0;
 }
