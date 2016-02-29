@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.10.0
+Version: 0.10.1
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -29,7 +29,7 @@ events
 - Can return time stamp for the last time the queue empty if not currently empty
 - Can be configured to discard items that have exceeded time limit
 - Blocked calls can use real time signal for demand calls to implement pull processing model
-- Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes 
+- Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes
 
 
 #### Working
@@ -67,19 +67,19 @@ Performance/stress test:
     ~/libshr $ cd shrq_harness
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
     input SUM[0..100000]=5000050000 output=5000050000
-    time:  0.1195
+    time:  0.1112
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 1000000
     input SUM[0..1000000]=500000500000 output=500000500000
-    time:  1.1390
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 600000
-    input SUM[0..2400000]=2880001200000 output=2880001200000
-    time:  0.9813
-    ~/libshr/shrq_harness $ ./shrq_harness 8 1 6000000
-    input SUM[0..24000000]=288000012000000 output=288000012000000
-    time:  9.5560
+    time:  1.0997
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 640000
+    input SUM[0..2560000]=3276801280000 output=3276801280000
+    time:  0.9876
+    ~/libshr/shrq_harness $ ./shrq_harness 8 1 6400000
+    input SUM[0..25600000]=327680012800000 output=327680012800000
+    time:  9.9201
 
 
- Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, 4 readers and 4 writers, the harness can write to and read from the queue at a rate of more than 2.4 million items per second.
+ Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, 4 readers and 4 writers, the harness can write to and read from the queue at a rate of more than 2.56 million items per second.
 
 ## Install
     ~/libshr $ sudo make install

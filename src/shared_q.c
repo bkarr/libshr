@@ -531,7 +531,7 @@ static void add_end(
     DWORD tail_after;
     int64_t next;
     view_s view = {.extent = q->current};
-    atomic_long *array = (atomic_long*)view.extent->array;
+    volatile atomic_long * volatile array = (atomic_long*)view.extent->array;
 
     array[slot] = slot;
     next_after.low = slot;
@@ -542,7 +542,7 @@ static void add_end(
         array[slot + 1] = tail_before.high + 1;
         next_after.high = tail_before.high + 1;
         view = insure_in_range(q, next);
-        array = (atomic_long*)view.extent->array;
+        array = (volatile atomic_long*volatile)view.extent->array;
         if (tail_before.low == array[next]) {
             if (DWCAS((DWORD*)&array[next], &tail_before, next_after)) {
                 DWCAS((DWORD*)&array[tail], &tail_before, next_after);
@@ -730,7 +730,7 @@ static int64_t remove_front(
     int64_t tail        // tail slot of list
 )   {
     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
-    int64_t *array = view.extent->array;
+    volatile int64_t * volatile array = view.extent->array;
     DWORD before;
     DWORD after;
 
@@ -742,7 +742,7 @@ static int64_t remove_front(
         after.high = before.high + 1;
         before.low = (uint64_t)ref;
         if (DWCAS((DWORD*)&array[head], &before, after)) {
-            memset(&array[ref], 0, 2 << 3);
+            memset((void*)&array[ref], 0, 2 << 3);
             return ref;
         }
     }
@@ -885,7 +885,7 @@ static sh_status_e add_to_leaf(
         return SH_ERR_NOMEM;
     }
 
-    int64_t *array = view.extent->array;
+    volatile int64_t * volatile array = view.extent->array;
     DWORD before = {0};
     DWORD after = {0};
 
@@ -1414,31 +1414,31 @@ static void signal_call(
 
 
 static inline bool is_monitored(
-    shr_q_s *q
+    int64_t *array
 )   {
-    return (q->current->array[NOTIFY_SIGNAL] && q->current->array[NOTIFY_PID]);
+    return (array[NOTIFY_SIGNAL] && array[NOTIFY_PID]);
 }
 
 
 static inline bool is_call_monitored(
-    shr_q_s *q
+    int64_t *array
 )   {
-    return (q->current->array[CALL_SIGNAL] && q->current->array[CALL_PID]);
+    return (array[CALL_SIGNAL] && array[CALL_PID]);
 }
 
 
 static inline bool is_discard_on_expire(
-    shr_q_s *q
+    int64_t *array
 )   {
-    return (q->current->array[FLAGS] & FLAG_DISCARD_EXPIRED);
+    return (array[FLAGS] & FLAG_DISCARD_EXPIRED);
 }
 
 
 static inline bool is_codel_active(
-    shr_q_s *q
+    int64_t *array
 )   {
-    return ((q->current->array[TARGET_NSEC] || q->current->array[TARGET_SEC]) &&
-    (q->current->array[LIMIT_NSEC] || q->current->array[LIMIT_NSEC]));
+    return ((array[TARGET_NSEC] || array[TARGET_SEC]) &&
+        (array[LIMIT_NSEC] || array[LIMIT_NSEC]));
 }
 
 
@@ -1512,7 +1512,7 @@ static void notify_event(
     shr_q_s *q,
     sq_event_e event
 )   {
-    if(is_monitored(q)) {
+    if(is_monitored(q->current->array)) {
         if (add_event(q, event)) {
             signal_event(q);
         }
@@ -1573,7 +1573,7 @@ static sh_status_e enq(
 
     int64_t count = AFA64(&array[COUNT], 1);
 
-    if (is_monitored(q)) {
+    if (is_monitored(array)) {
         if (count == 0) {
             // queue emptied
             update_empty_timestamp(array);
@@ -1655,7 +1655,7 @@ static bool item_exceeds_delay(
     int64_t item_slot,              // array index for item
     int64_t *array                  // array to access
 )   {
-    if (count > 1 && is_codel_active(q)) {
+    if (count > 1 && is_codel_active(array)) {
         struct timespec intrvl = {0};
         struct timespec last = *(struct timespec*)&array[EMPTY_SEC];
         if (last.tv_sec == 0) {
@@ -1747,13 +1747,13 @@ static sq_item_s deq(
 
         int64_t count = AFS64(&array[COUNT], 1);
 
-        if (is_codel_active(q) && count == 1) {
+        if (is_codel_active(array) && count == 1) {
             clear_empty_timestamp(array);
         }
 
-        bool expired = (is_discard_on_expire(q) || is_monitored(q) ?
+        bool expired = (is_discard_on_expire(array) || is_monitored(array) ?
             item_exceeds_delay(q, count, data_slot, array) : false);
-        if (is_monitored(q)) {
+        if (is_monitored(array)) {
             bool need_signal = false;
             if (count == 1) {
                 need_signal |= add_event(q, SQ_EVNT_EMPTY);
@@ -1766,7 +1766,7 @@ static sq_item_s deq(
             }
         }
 
-        if (expired && is_discard_on_expire(q)) {
+        if (expired && is_discard_on_expire(array)) {
             memset(&item, 0, sizeof(item));
             free_data_slots(q, data_slot, array[data_slot]);
             item.status = SH_ERR_EXIST;
@@ -2303,7 +2303,8 @@ extern sh_status_e shr_q_add(
     }
     (void)AFA64(&q->accessors, 1);
 
-    while (sem_trywait((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+    int64_t *array = q->current->array;
+    while (sem_trywait((sem_t*)&array[WRITE_SEM]) < 0) {
         if (errno == EAGAIN) {
             notify_event(q, SQ_EVNT_DEPTH);
             (void)AFS64(&q->accessors, 1);
@@ -2322,7 +2323,8 @@ extern sh_status_e shr_q_add(
         return status;
     }
 
-    while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             status = SH_ERR_STATE;
             (void)AFS64(&q->accessors, 1);
@@ -2330,7 +2332,7 @@ extern sh_status_e shr_q_add(
         }
     }
 
-    if (is_monitored(q)) {
+    if (is_monitored(array)) {
         check_level(q);
     }
 
@@ -2366,13 +2368,14 @@ extern sh_status_e shr_q_add_wait(
     }
     (void)AFA64(&q->accessors, 1);
 
+    int64_t *array = q->current->array;
     int sval = 0;
-    if (sem_getvalue((sem_t*)&q->current->array[WRITE_SEM], &sval) == 0 &&
+    if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
         notify_event(q, SQ_EVNT_DEPTH);
     }
 
-    while (sem_wait((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
+    while (sem_wait((sem_t*)&array[WRITE_SEM]) < 0) {
         if (errno == EINVAL) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_STATE;
@@ -2386,14 +2389,15 @@ extern sh_status_e shr_q_add_wait(
         return status;
     }
 
-    while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_STATE;
         }
     }
 
-    if (is_monitored(q)) {
+    if (is_monitored(array)) {
         check_level(q);
     }
 
@@ -2432,8 +2436,9 @@ extern sh_status_e shr_q_add_timedwait(
     }
     (void)AFA64(&q->accessors, 1);
 
+    int64_t *array = q->current->array;
     int sval = 0;
-    if (sem_getvalue((sem_t*)&q->current->array[WRITE_SEM], &sval) == 0 &&
+    if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
         notify_event(q, SQ_EVNT_DEPTH);
     }
@@ -2441,7 +2446,7 @@ extern sh_status_e shr_q_add_timedwait(
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     timespecadd(&ts, timeout, &ts);
-    while (sem_timedwait((sem_t*)&q->current->array[WRITE_SEM], &ts) < 0) {
+    while (sem_timedwait((sem_t*)&array[WRITE_SEM], &ts) < 0) {
         if (errno == ETIMEDOUT) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_LIMIT;
@@ -2459,14 +2464,15 @@ extern sh_status_e shr_q_add_timedwait(
         return status;
     }
 
-    while (sem_post((sem_t*)&q->current->array[READ_SEM]) < 0) {
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
         if (errno == EINVAL) {
             (void)AFS64(&q->accessors, 1);
             return SH_ERR_STATE;
         }
     }
 
-    if (is_monitored(q)) {
+    if (is_monitored(array)) {
         check_level(q);
     }
 
@@ -2521,10 +2527,13 @@ extern sq_item_s shr_q_remove(
 
     (void)AFA64(&q->accessors, 1);
 
+    int64_t *array;
+
     while (true) {
-        while (sem_trywait((sem_t*)&q->current->array[READ_SEM]) < 0) {
+        array = q->current->array;
+        while (sem_trywait((sem_t*)&array[READ_SEM]) < 0) {
             if (errno == EAGAIN) {
-                if (is_call_monitored(q)) {
+                if (is_call_monitored(array)) {
                     signal_call(q);
                 }
                 (void)AFS64(&q->accessors, 1);
@@ -2609,7 +2618,7 @@ extern sq_item_s shr_q_remove_wait(
 
     while (true) {
         (void)AFA64(&q->current->array[CALL_BLOCKS], 1);
-        if (is_call_monitored(q)) {
+        if (is_call_monitored(q->current->array)) {
             signal_call(q);
         }
         while (sem_wait((sem_t*)&q->current->array[READ_SEM]) < 0) {
@@ -2695,7 +2704,7 @@ extern sq_item_s shr_q_remove_timedwait(
 
     while (true) {
         (void)AFA64(&q->current->array[CALL_BLOCKS], 1);
-        if (is_call_monitored(q)) {
+        if (is_call_monitored(q->current->array)) {
             signal_call(q);
         }
         struct timespec ts;
@@ -3078,7 +3087,7 @@ extern bool shr_q_will_discard(
     }
 
     (void)AFA64(&q->accessors, 1);
-    bool result = is_discard_on_expire(q);
+    bool result = is_discard_on_expire(q->current->array);
     (void)AFS64(&q->accessors, 1);
     return result;
 }
