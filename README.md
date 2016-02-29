@@ -29,6 +29,7 @@ events
 - Can return time stamp for the last time the queue empty if not currently empty
 - Can be configured to discard items that have exceeded time limit
 - Blocked calls can use real time signal for demand calls to implement pull processing model
+- Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes 
 
 
 #### Working
