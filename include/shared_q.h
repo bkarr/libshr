@@ -475,7 +475,8 @@ extern int64_t shr_q_count(
 
 
 /*
-    shr_q_level -- sets value for queue depth level event generation
+    shr_q_level -- sets value for queue depth level event generation and for
+        adaptive LIFO
 
     returns sh_status_e:
 

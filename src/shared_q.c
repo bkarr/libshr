@@ -138,10 +138,12 @@ enum shr_q_disp
     CALL_UNBLOCKS,                  // count of unblocked remove calls
     TARGET_SEC,                     // target CoDel delay in seconds
     TARGET_NSEC,                    // target CoDel time limit in nanoseconds
+    STACK_HEAD,                     // head of stack for adaptive LIFO
+    STACK_HD_CNT,                   // head of stack counter
     FLAGS,                          // configuration flag values
     LEVEL,                          // queue depth event level
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 14),         // end of queue header
+    HDR_END = (AVAIL + 12),         // end of queue header
 };
 
 
@@ -1526,7 +1528,7 @@ static void update_empty_timestamp(
     struct timespec curr_time;
     clock_gettime(CLOCK_REALTIME, &curr_time);
     struct timespec last = *(struct timespec * volatile)&array[EMPTY_SEC];
-    DWORD next = {.high = curr_time.tv_sec, .low = curr_time.tv_nsec};
+    DWORD next = {.low = curr_time.tv_sec, .high = curr_time.tv_nsec};
     while (timespeccmp(&curr_time, &last, >)) {
         if (DWCAS((DWORD*)&array[EMPTY_SEC], (DWORD*)&last, next)) {
             break;
@@ -1553,8 +1555,8 @@ static sh_status_e enq(
     int64_t *array = extent->array;
 
     DWORD curr_time;
-    curr_time.high = array[data_slot + TM_SEC];
-    curr_time.low = array[data_slot + TM_NSEC];
+    curr_time.low = array[data_slot + TM_SEC];
+    curr_time.high = array[data_slot + TM_NSEC];
 
     // allocate queue node
     view_s view = alloc_node_slots(q);
@@ -1628,7 +1630,8 @@ static int64_t next_item(
 static bool item_exceeds_limit(
     shr_q_s *q,                     // pointer to queue
     int64_t item_slot,              // array index for item
-    struct timespec *timelimit      // expiration timelimit
+    struct timespec *timelimit,     // expiration timelimit
+    struct timespec *curr_time      // current time
 )   {
     if (q == NULL || item_slot < HDR_END || timelimit == NULL) {
         return false;
@@ -1638,11 +1641,9 @@ static bool item_exceeds_limit(
     }
     view_s view = insure_in_range(q, item_slot);
     int64_t *array = view.extent->array;
-    struct timespec curr_time;
-    clock_gettime(CLOCK_REALTIME, &curr_time);
     struct timespec diff = {0, 0};
     struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
-    timespecsub(&curr_time, item, &diff);
+    timespecsub(curr_time, item, &diff);
     if (timespeccmp(&diff, timelimit, >)) {
         return true;
     }
@@ -1651,26 +1652,26 @@ static bool item_exceeds_limit(
 
 static bool item_exceeds_delay(
     shr_q_s *q,                     // pointer to queue
-    int64_t count,                  // count of items on queue
     int64_t item_slot,              // array index for item
     int64_t *array                  // array to access
 )   {
-    if (count > 1 && is_codel_active(array)) {
+    struct timespec current;
+    clock_gettime(CLOCK_REALTIME, &current);
+    if (is_codel_active(array)) {
         struct timespec intrvl = {0};
         struct timespec last = *(struct timespec*)&array[EMPTY_SEC];
         if (last.tv_sec == 0) {
             return item_exceeds_limit(q, item_slot,
-                (struct timespec*)&array[LIMIT_SEC]);
+                (struct timespec*)&array[LIMIT_SEC], &current);
         }
-        struct timespec current;
-        clock_gettime(CLOCK_REALTIME, &current);
         timespecsub(&current, (struct timespec*)&array[LIMIT_SEC], &intrvl);
         if (timespeccmp(&last, &intrvl, <)) {
             return item_exceeds_limit(q, item_slot,
-                (struct timespec*)&array[TARGET_SEC]);
+                (struct timespec*)&array[TARGET_SEC], &current);
         }
     }
-    return item_exceeds_limit(q, item_slot, (struct timespec*)&array[LIMIT_SEC]);
+    return item_exceeds_limit(q, item_slot, (struct timespec*)&array[LIMIT_SEC],
+        &current);
 }
 
 
@@ -1752,7 +1753,7 @@ static sq_item_s deq(
         }
 
         bool expired = (is_discard_on_expire(array) || is_monitored(array) ?
-            item_exceeds_delay(q, count, data_slot, array) : false);
+            item_exceeds_delay(q, data_slot, array) : false);
         if (is_monitored(array)) {
             bool need_signal = false;
             if (count == 1) {
@@ -2861,7 +2862,8 @@ extern int64_t shr_q_count(
 
 
 /*
-    shr_q_level -- sets value for queue depth level event generation
+    shr_q_level -- sets value for queue depth level event generation and for
+        adaptive LIFO
 
     returns sh_status_e:
 
@@ -2911,8 +2913,8 @@ extern sh_status_e shr_q_timelimit(
     int64_t *array = q->current->array;
     struct timespec prev;
     DWORD next;
-    next.high = nanoseconds;
     next.low = seconds;
+    next.high = nanoseconds;
     do {
         prev.tv_sec = (volatile time_t)array[LIMIT_SEC];
         prev.tv_nsec = (volatile long)array[LIMIT_NSEC];
@@ -2946,6 +2948,8 @@ extern sh_status_e shr_q_clean(
         return SH_ERR_STATE;
     }
 
+    struct timespec curr_time;
+
     (void)AFA64(&q->accessors, 1);
 
     while(true) {
@@ -2978,7 +2982,8 @@ extern sh_status_e shr_q_clean(
             break;
         }
 
-        if (!item_exceeds_limit(q, data_slot, timelimit)) {
+        clock_gettime(CLOCK_REALTIME, &curr_time);
+        if (!item_exceeds_limit(q, data_slot, timelimit, &curr_time)) {
             break;
         }
 
@@ -3238,8 +3243,8 @@ extern sh_status_e shr_q_target_delay(
     int64_t *array = q->current->array;
     struct timespec prev;
     DWORD next;
-    next.high = nanoseconds;
     next.low = seconds;
+    next.high = nanoseconds;
     do {
         prev.tv_sec = (volatile time_t)array[TARGET_SEC];
         prev.tv_nsec = (volatile long)array[TARGET_NSEC];
@@ -4106,7 +4111,7 @@ static void test_codel_algorithm(void)
     assert(shr_q_monitor(q, SIGUSR2) == SH_OK);
     assert(shr_q_will_discard(q) == false);
     assert(shr_q_timelimit(q, 0, 100000000) == SH_OK);
-    assert(shr_q_target_delay(q, 0, 50000000) == SH_OK);
+    assert(shr_q_target_delay(q, 0, 5000000) == SH_OK);
     assert(shr_q_will_discard(q) == true);
     status = shr_q_add(q, "test", 4);
     assert(status == SH_OK);
@@ -4119,15 +4124,25 @@ static void test_codel_algorithm(void)
     status = shr_q_add(q, "test1", 5);
     assert(status == SH_OK);
     assert(shr_q_count(q) == 2);
-    // sleep.tv_nsec = 20000000;
+    sleep.tv_sec = 0;
+    sleep.tv_nsec = 10000000;
     while (nanosleep(&sleep, &sleep) < 0) {
         if (errno != EINTR) {
             break;
         }
     }
+    status = shr_q_add(q, "test2", 5);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 3);
     item = shr_q_remove(q, &item.buffer, &item.buf_size);
-    assert(item.status == SH_ERR_EMPTY);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test2", item.length) == 0);
     assert(shr_q_count(q) == 0);
+    assert(shr_q_event(q) == SQ_EVNT_TIME);
     assert(shr_q_event(q) == SQ_EVNT_TIME);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
