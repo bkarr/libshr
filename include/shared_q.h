@@ -659,6 +659,15 @@ extern sh_status_e shr_q_target_delay(
 );
 
 
+/*
+    shr_q_is_valid -- returns true if name is a valid queue
+
+*/
+extern bool shr_q_is_valid(
+    char const * const name // name of q as a null terminated string -- not NULL
+);
+
+
 #ifdef __cplusplus
 }
 

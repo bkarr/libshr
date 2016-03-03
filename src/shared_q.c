@@ -417,6 +417,57 @@ static bool clear_flag(
 }
 
 
+static sh_status_e validate_name(
+    char const * const name
+)   {
+    if (name == NULL) {
+        return SH_ERR_PATH;
+    }
+    size_t len = strlen(name);
+    if (len == 0) {
+        return SH_ERR_PATH;
+    }
+    if (len > PATH_MAX) {
+        return SH_ERR_PATH;
+    }
+    return SH_OK;
+}
+
+
+static sh_status_e validate_existence(
+    char const * const name,
+    size_t *size
+)   {
+    if (size) {
+        *size = 0;
+    }
+    struct stat statbuf;
+    int bsize = sizeof(SHR_OBJ_DIR) + strlen(name);
+    char nm_buffer[bsize];
+    memset(&nm_buffer[0], 0, bsize);
+    memcpy(&nm_buffer[0], SHR_OBJ_DIR, sizeof(SHR_OBJ_DIR));
+    int index = sizeof(SHR_OBJ_DIR) - 1;
+    if (name[0] == '/') {
+        index--;
+    }
+    memcpy(&nm_buffer[index], name, strlen(name));
+    int rc = stat(&nm_buffer[0], &statbuf);
+    if (rc < 0) {
+        if (errno == ENOENT) {
+            return SH_ERR_EXIST;
+        }
+        return convert_to_status(errno);
+    }
+    if (!S_ISREG(statbuf.st_mode)) {
+        return SH_ERR_STATE;
+    }
+    if (size) {
+        *size = statbuf.st_size;
+    }
+    return SH_OK;
+}
+
+
 static sh_status_e init_queue(
     shr_q_s **q,                // address of q struct pointer -- not NULL
     uint32_t max_depth          // max depth allowed at which add is blocked
@@ -1896,6 +1947,19 @@ extern sh_status_e shr_q_create(
         return SH_ERR_ARG;
     }
 
+    sh_status_e status = validate_name(name);
+    if (status) {
+        return status;
+    }
+
+    status = validate_existence(name, NULL);
+    if (status == SH_OK) {
+        return SH_ERR_EXIST;
+    }
+    if (status != SH_ERR_EXIST) {
+        return status;
+    }
+
     if (max_depth == 0) {
         max_depth = SEM_VALUE_MAX;
     }
@@ -1933,26 +1997,15 @@ extern sh_status_e shr_q_open(
         return SH_ERR_ARG;
     }
 
-    if (strlen(name) > PATH_MAX) {
-        return SH_ERR_PATH;
+    sh_status_e status = validate_name(name);
+    if (status) {
+        return status;
     }
 
-    struct stat statbuf;
-    int bsize = sizeof(SHR_OBJ_DIR) + strlen(name);
-    char nm_buffer[bsize];
-    memset(&nm_buffer[0], 0, bsize);
-    memcpy(&nm_buffer[0], SHR_OBJ_DIR, sizeof(SHR_OBJ_DIR));
-    int index = sizeof(SHR_OBJ_DIR) - 1;
-    if (name[0] == '/') {
-        index--;
-    }
-    memcpy(&nm_buffer[index], name, strlen(name));
-    int rc = stat(&nm_buffer[0], &statbuf);
-    if (rc < 0) {
-        if (errno == ENOENT) {
-            return SH_ERR_EXIST;
-        }
-        return convert_to_status(errno);
+    size_t size = 0;
+    status = validate_existence(name, &size);
+    if (status) {
+        return status;
     }
 
     *q = calloc(1, sizeof(shr_q_s));
@@ -1979,7 +2032,6 @@ extern sh_status_e shr_q_open(
 
     int prot = PROT_READ | PROT_WRITE;
     (*q)->flags = MAP_SHARED;
-    size_t size = statbuf.st_size;
     do {
         (*q)->current->array = mmap(0, size, prot, (*q)->flags, (*q)->fd, 0);
         if ((*q)->current->array == (void*)-1) {
@@ -3254,6 +3306,57 @@ extern sh_status_e shr_q_target_delay(
 }
 
 
+/*
+    shr_q_is_valid -- returns true if name is a valid queue
+
+*/
+extern bool shr_q_is_valid(
+    char const * const name // name of q as a null terminated string -- not NULL
+)   {
+    sh_status_e status = validate_name(name);
+    if (status) {
+        return false;
+    }
+
+    size_t size = 0;
+    status = validate_existence(name, &size);
+    if (status) {
+        return false;
+    }
+
+    if (size < PAGE_SIZE) {
+        return false;
+    }
+
+    int fd = shm_open(name, O_RDONLY, FILE_MODE);
+    if (fd < 0) {
+        return false;
+    }
+
+    int64_t *array = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
+    if (array == (void*)-1) {
+        close(fd);
+        return false;
+    }
+
+    if (memcmp(&array[TAG], SHRQ, sizeof(SHRQ) - 1) != 0) {
+        munmap(array, size);
+        close(fd);
+        return false;
+    }
+
+    if (array[VERSION] != 0) {
+        munmap(array, size);
+        close(fd);
+        return false;
+    }
+
+    munmap(array, size);
+    close(fd);
+    return true;
+}
+
+
 /*==============================================================================
 
     unit tests
@@ -3838,6 +3941,30 @@ static void test_remove_timedwait_errors(void)
 }
 
 
+static void test_is_valid(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shm_unlink("testq");
+    assert(!shr_q_is_valid(NULL));
+    assert(!shr_q_is_valid(""));
+    assert(!shr_q_is_valid("testq"));
+    int fd = shm_open("testq", O_RDWR | O_CREAT | O_EXCL, FILE_MODE);
+    assert(fd > 0);
+    int rc = ftruncate(fd, PAGE_SIZE >> 1);
+    assert(rc == 0);
+    assert(!shr_q_is_valid("testq"));
+    rc = ftruncate(fd, PAGE_SIZE);
+    assert(rc == 0);
+    assert(!shr_q_is_valid("testq"));
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    assert(shr_q_is_valid("testq"));
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
 static void test_subscription(void)
 {
     sh_status_e status;
@@ -4172,6 +4299,7 @@ int main(void)
     test_remove_errors();
     test_remove_wait_errors();
     test_remove_timedwait_errors();
+    test_is_valid();
 
     // set up to test open and close
     shr_q_s *q;
