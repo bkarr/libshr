@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2016 Bryan Karr
+Copyright (c) 2015-2016 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -99,6 +99,12 @@ typedef enum
     SQ_READWRITE            // queue instance can add/remove items
 } sq_mode_e;
 
+typedef struct sq_vec
+{
+    int64_t len;            // length of data
+    void *base;             // pointer to vector data
+} sq_vec_s;
+
 typedef struct sq_item
 {
     sh_status_e status;         // returned status
@@ -107,6 +113,8 @@ typedef struct sq_item
     struct timespec *timestamp; // pointer to timestamp of add to queue
     void *buffer;               // pointer to data buffer
     int64_t buf_size;           // size of buffer
+    int32_t vcount;             // vector count
+    sq_vec_s *vector;           // array of vectors
 } sq_item_s;
 
 /*==============================================================================
@@ -311,6 +319,7 @@ extern sh_status_e shr_q_add_wait(
     int64_t length      // length of item -- greater than 0
 );
 
+
 /*
     shr_q_add_timedwait -- attempt to add item to queue for specified period
 
@@ -330,6 +339,69 @@ extern sh_status_e shr_q_add_timedwait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     void *value,        // pointer to item -- not NULL
     int64_t length,     // length of item -- greater than 0
+    struct timespec *timeout    // timeout value -- not NULL
+);
+
+
+/*
+    shr_q_addv -- add vector of items to queue
+
+    Non-blocking add of a vector of items to shared queue.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_LIMIT    if queue size is at maximum depth
+    SH_ERR_ARG      if q is NULL, vector is NULL, or vcnt is < 1
+    SH_ERR_STATE    if q is immutable or read only
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 1
+);
+
+
+/*
+    shr_q_addv_wait -- attempt to add vector of items to queue
+
+    Attempt to add a vector of items to shared queue, and block if at max depth
+    limit until depth limit allows.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL, vector is NULL, or vcnt is < 1
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv_wait(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 1
+);
+
+
+/*
+    shr_q_addv_timedwait -- attempt to add vector of items to queue for
+                            specified period
+
+    Attempt to add a vector of items to shared queue, and block if at max depth
+    limit until depth limit allows or timeout value reached.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_LIMIT    if queue size is at maximum depth
+    SH_ERR_ARG      if q is NULL, vector is NULL, vcnt is < 1, or timeout
+                    is NULL
+    SH_ERR_STATE    if q is immutable or read only or q corrupted
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv_timedwait(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt,       // count of vector array -- must be >= 1
     struct timespec *timeout    // timeout value -- not NULL
 );
 

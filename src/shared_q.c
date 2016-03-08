@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2016 Bryan Karr
+Copyright (c) 2015-2016 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -87,13 +87,14 @@ enum shr_q_constants
 {
     PAGE_SIZE = 4096,   // initial size of memory mapped file for queue
     NODE_SIZE = 4,      // node slot count
-    DATA_HDR = 4,       // data header
+    DATA_HDR = 5,       // data header
     EVENT_OFFSET = 2,   // offset in node for event for queued item
     VALUE_OFFSET = 3,   // offset in node for data slot for queued item
     DATA_SLOTS = 0,     // total data slots (including header)
     TM_SEC = 1,         // offset for data timestamp seconds value
     TM_NSEC = 2,        // offset for data timestamp nanoseconds value
-    DATA_LENGTH = 3,    // offset for data length
+    VEC_CNT = 3,        // offset for vector count
+    DATA_LENGTH = 4,    // offset for data length
 };
 
 // define queue header slot offsets
@@ -1359,7 +1360,7 @@ static view_s alloc_data_slots(
 }
 
 
-static int64_t calc_data_slots(
+static inline int64_t calc_data_slots(
     int64_t length
 ) {
     int64_t space = DATA_HDR;
@@ -1394,8 +1395,71 @@ static int64_t copy_value(
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
+        array[current + VEC_CNT] = 1;
         array[current + DATA_LENGTH] = length;
         memcpy(&array[current + DATA_HDR], value, length);
+    }
+
+    return current;
+}
+
+
+static int64_t calc_vector_slots(
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 2
+) {
+    int64_t space = DATA_HDR;
+
+    for(int i = 0; i < vcnt; i++) {
+        // increment for embedded data length
+        space++;
+        // calculate number of slots needed for data
+        space += (vector[i].len >> 3);
+        // account for remainder
+        if (vector[i].len & 7) {
+            space++;
+        }
+    }
+
+    return space;
+}
+
+
+static int64_t copy_vector(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 2
+)   {
+    if (q == NULL || vector == NULL || vcnt < 2) {
+        return 0;
+    }
+
+    struct timespec curr_time;
+    clock_gettime(CLOCK_REALTIME, &curr_time);
+    int64_t space = calc_vector_slots(vector, vcnt);
+
+    view_s view = alloc_data_slots(q, space);
+    int64_t current = view.slot;
+    if (current) {
+        int64_t *array = view.extent->array;
+        array[current + DATA_SLOTS] = space;
+        array[current + TM_SEC] = curr_time.tv_sec;
+        array[current + TM_NSEC] = curr_time.tv_nsec;
+        array[current + VEC_CNT] = vcnt;
+        array[current + DATA_LENGTH] = (space - DATA_HDR) << 3;
+        int64_t slot = current;
+        slot += DATA_HDR;
+        for (int i = 0; i < vcnt; i++) {
+            if (vector[i].len <= 0 || vector[i].base == NULL) {
+                return -1;
+            }
+            array[slot++] = vector[i].len;
+            memcpy(&array[slot], vector[i].base, vector[i].len);
+            slot += (vector[i].len >> 3);
+            if (vector[i].len & 7) {
+                slot++;
+            }
+        }
     }
 
     return current;
@@ -1589,19 +1653,14 @@ static void update_empty_timestamp(
 }
 
 
-static sh_status_e enq(
+static sh_status_e enq_data(
     shr_q_s *q,         // pointer to queue, not NULL
-    void *value,        // pointer to item, not NULL
-    int64_t length      // length of item
+    int64_t data_slot   // data to be added to queue
 )   {
-    int64_t node;
-    int64_t data_slot;
-
-    // allocate space and copy value
-    data_slot = copy_value(q, value, length);
-    if (data_slot == 0) {
-        return SH_ERR_NOMEM;
+    if (q == NULL || data_slot < HDR_END) {
+        return SH_ERR_ARG;
     }
+    int64_t node;
     extent_s *extent = q->current;
     int64_t *array = extent->array;
 
@@ -1612,7 +1671,7 @@ static sh_status_e enq(
     // allocate queue node
     view_s view = alloc_node_slots(q);
     if (view.slot == 0) {
-        free_data_slots(q, data_slot, calc_data_slots(length));
+        free_data_slots(q, data_slot, array[data_slot + DATA_SLOTS]);
         return SH_ERR_NOMEM;
     }
     node = view.slot;
@@ -1653,6 +1712,47 @@ static sh_status_e enq(
     release_prev_extents(q);
 
     return SH_OK;
+}
+
+
+static sh_status_e enq(
+    shr_q_s *q,         // pointer to queue, not NULL
+    void *value,        // pointer to item, not NULL
+    int64_t length      // length of item
+)   {
+    if (q == NULL || value == NULL || length <= 0) {
+        return SH_ERR_ARG;
+    }
+    int64_t data_slot;
+
+    // allocate space and copy value
+    data_slot = copy_value(q, value, length);
+    if (data_slot == 0) {
+        return SH_ERR_NOMEM;
+    }
+    return enq_data(q, data_slot);
+}
+
+
+static sh_status_e enqv(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 2
+)   {
+    if (q == NULL || vector == NULL || vcnt < 2) {
+        return 0;
+    }
+    int64_t data_slot;
+
+    // allocate space and copy vector
+    data_slot = copy_vector(q, vector, vcnt);
+    if (data_slot < 0) {
+        return SH_ERR_ARG;
+    }
+    if (data_slot == 0) {
+        return SH_ERR_NOMEM;
+    }
+    return enq_data(q, data_slot);
 }
 
 
@@ -1738,6 +1838,53 @@ static void clear_empty_timestamp(
 }
 
 
+static void copy_to_buffer(
+    int64_t *array,     // pointer to queue array
+    int64_t data_slot,  // data item index
+    sq_item_s *item,    // pointer to item
+    void **buffer,      // address of buffer pointer, or NULL
+    int64_t *buff_size  // pointer to length of buffer if buffer present
+)   {
+    int64_t size = (array[data_slot + DATA_SLOTS] << 3) - sizeof(int64_t);
+    int64_t total = size + array[data_slot + VEC_CNT] * sizeof(sq_vec_s);
+    if (*buffer && *buff_size < total) {
+        free(*buffer);
+        *buffer = NULL;
+        *buff_size = 0;
+    }
+    if (*buffer == NULL) {
+        *buffer = malloc(total);
+        *buff_size = total;
+        if (*buffer == NULL) {
+            item->status = SH_ERR_NOMEM;
+            return;
+        }
+    }
+
+    memcpy(*buffer, &array[data_slot + 1], size);
+    item->buffer = *buffer;
+    item->buf_size = size;
+    item->length = array[data_slot + DATA_LENGTH];
+    item->timestamp = *buffer;
+    item->value = (uint8_t*)*buffer + ((DATA_HDR - 1) * sizeof(int64_t));
+    item->vcount = array[data_slot + VEC_CNT];
+    item->vector = (sq_vec_s*)((uint8_t*)*buffer + size);
+    if (item->vcount == 1) {
+        item->vector[0].len = item->length;
+        item->vector[0].base = item->value;
+    } else {
+        uint8_t *current = (uint8_t*)item->value;
+        for (int i = 0; i < item->vcount; i++) {
+            item->vector[i].len = *(int64_t*)current;
+            current += sizeof(int64_t);
+            item->vector[i].base = current;
+            current += item->vector[i].len;
+            current += sizeof(int64_t) - (item->vector[i].len & 7);
+        }
+    }
+}
+
+
 static sq_item_s deq(
     shr_q_s *q,         // pointer to queue
     void **buffer,      // address of buffer pointer, or NULL
@@ -1774,28 +1921,7 @@ static sq_item_s deq(
         }
         array = view.extent->array;
 
-        // copy data to buffer
-        int64_t size = (array[data_slot + DATA_SLOTS] << 3) - sizeof(int64_t);
-        if (*buffer && *buff_size < size) {
-            free(*buffer);
-            *buffer = NULL;
-            *buff_size = 0;
-        }
-        if (*buffer == NULL) {
-            *buffer = malloc(size);
-            *buff_size = size;
-            if (*buffer == NULL) {
-                item.status = SH_ERR_NOMEM;
-                break;
-            }
-        }
-
-        memcpy(*buffer, &array[data_slot + 1], size);
-        item.buffer = *buffer;
-        item.buf_size = size;
-        item.length = array[data_slot + DATA_LENGTH];
-        item.timestamp = *buffer;
-        item.value = (uint8_t*)*buffer + (3 * sizeof(int64_t));
+        copy_to_buffer(array, data_slot, &item, buffer, buff_size);
 
         int64_t count = AFS64(&array[COUNT], 1);
 
@@ -2372,6 +2498,7 @@ extern sh_status_e shr_q_add(
     sh_status_e status = enq(q, value, length);
 
     if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
         (void)AFS64(&q->accessors, 1);
         return status;
     }
@@ -2438,6 +2565,7 @@ extern sh_status_e shr_q_add_wait(
     sh_status_e status = enq(q, value, length);
 
     if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
         (void)AFS64(&q->accessors, 1);
         return status;
     }
@@ -2513,6 +2641,230 @@ extern sh_status_e shr_q_add_timedwait(
     sh_status_e status = enq(q, value, length);
 
     if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
+
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    if (is_monitored(array)) {
+        check_level(q);
+    }
+
+    (void)AFS64(&q->accessors, 1);
+    return status;
+}
+
+
+/*
+    shr_q_addv -- add vector of items to queue
+
+    Non-blocking add of a vector of items to shared queue.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_LIMIT    if queue size is at maximum depth
+    SH_ERR_ARG      if q is NULL, vector is NULL, or vcnt is < 1
+    SH_ERR_STATE    if q is immutable or read only
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 1
+)   {
+    if (q == NULL || vector == NULL || vcnt < 1) {
+        return SH_ERR_ARG;
+    }
+
+    if (!(q->mode & SQ_WRITE_ONLY)) {
+        return SH_ERR_STATE;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t *array = q->current->array;
+    while (sem_trywait((sem_t*)&array[WRITE_SEM]) < 0) {
+        if (errno == EAGAIN) {
+            notify_event(q, SQ_EVNT_DEPTH);
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_LIMIT;
+        }
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    sh_status_e status;
+    if (vcnt == 1) {
+        status = enq(q, vector[0].base, vector[0].len);
+    } else {
+        status = enqv(q, vector, vcnt);
+    }
+
+    if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
+
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
+        if (errno == EINVAL) {
+            status = SH_ERR_STATE;
+            (void)AFS64(&q->accessors, 1);
+            return status;
+        }
+    }
+
+    if (is_monitored(array)) {
+        check_level(q);
+    }
+
+    (void)AFS64(&q->accessors, 1);
+    return status;
+}
+
+
+/*
+    shr_q_addv_wait -- attempt to add vector of items to queue
+
+    Attempt to add a vector of items to shared queue, and block if at max depth
+    limit until depth limit allows.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL, vector is NULL, or vcnt is < 1
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv_wait(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt        // count of vector array -- must be >= 1
+)   {
+    if (q == NULL || vector == NULL || vcnt < 1) {
+        return SH_ERR_ARG;
+    }
+
+    if (!(q->mode & SQ_WRITE_ONLY)) {
+        return SH_ERR_STATE;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t *array = q->current->array;
+    int sval = 0;
+    if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
+        sval == 0) {
+        notify_event(q, SQ_EVNT_DEPTH);
+    }
+
+    while (sem_wait((sem_t*)&array[WRITE_SEM]) < 0) {
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    sh_status_e status;
+    if (vcnt == 1) {
+        status = enq(q, vector[0].base, vector[0].len);
+    } else {
+        status = enqv(q, vector, vcnt);
+    }
+
+    if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
+        (void)AFS64(&q->accessors, 1);
+        return status;
+    }
+
+    array = q->current->array;
+    while (sem_post((sem_t*)&array[READ_SEM]) < 0) {
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    if (is_monitored(array)) {
+        check_level(q);
+    }
+
+    (void)AFS64(&q->accessors, 1);
+    return status;
+}
+
+
+/*
+    shr_q_addv_timedwait -- attempt to add vector of items to queue for
+                            specified period
+
+    Attempt to add a vector of items to shared queue, and block if at max depth
+    limit until depth limit allows or timeout value reached.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_LIMIT    if queue size is at maximum depth
+    SH_ERR_ARG      if q is NULL, vector is NULL, vcnt is < 1, or timeout
+                    is NULL
+    SH_ERR_STATE    if q is immutable or read only or q corrupted
+    SH_ERR_NOMEM    if not enough memory to satisfy request
+*/
+extern sh_status_e shr_q_addv_timedwait(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    int64_t vcnt,       // count of vector array -- must be >= 1
+    struct timespec *timeout    // timeout value -- not NULL
+)   {
+    if (q == NULL || vector == NULL || vcnt < 1 || timeout == NULL) {
+        return SH_ERR_ARG;
+    }
+
+    if (!(q->mode & SQ_WRITE_ONLY)) {
+        return SH_ERR_STATE;
+    }
+    (void)AFA64(&q->accessors, 1);
+
+    int64_t *array = q->current->array;
+    int sval = 0;
+    if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
+        sval == 0) {
+        notify_event(q, SQ_EVNT_DEPTH);
+    }
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    timespecadd(&ts, timeout, &ts);
+    while (sem_timedwait((sem_t*)&array[WRITE_SEM], &ts) < 0) {
+        if (errno == ETIMEDOUT) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_LIMIT;
+        }
+        if (errno == EINVAL) {
+            (void)AFS64(&q->accessors, 1);
+            return SH_ERR_STATE;
+        }
+    }
+
+    sh_status_e status;
+    if (vcnt == 1) {
+        status = enq(q, vector[0].base, vector[0].len);
+    } else {
+        status = enqv(q, vector, vcnt);
+    }
+
+    if (status != SH_OK) {
+        sem_post((sem_t*)&array[WRITE_SEM]);
         (void)AFS64(&q->accessors, 1);
         return status;
     }
@@ -3965,6 +4317,162 @@ static void test_is_valid(void)
     assert(status == SH_OK);
 }
 
+static void test_addv_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+
+    status = shr_q_addv(q, vector, 1);
+    assert(status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    status = shr_q_addv(q, NULL, 1);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv(q, vector, 0);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv(q, vector, 1);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv(tq, vector, 1);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    status = shr_q_addv(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = NULL;
+    vector[0].len = 4;
+    status = shr_q_addv(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    vector[0].len = 4;
+    vector[1].base = "test1";
+    vector[1].len = 0;
+    status = shr_q_addv(tq, vector, 2);
+    assert(status == SH_ERR_ARG);
+    vector[1].base = NULL;
+    vector[1].len = 5;
+    status = shr_q_addv(tq, vector, 2);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+static void test_addv_wait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+
+    status = shr_q_addv_wait(q, vector, 1);
+    assert(status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    status = shr_q_addv_wait(q, NULL, 1);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv_wait(q, vector, 0);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv_wait(q, vector, 1);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv_wait(tq, vector, 1);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv_wait(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    status = shr_q_addv_wait(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = NULL;
+    vector[0].len = 4;
+    status = shr_q_addv_wait(tq, vector, 1);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    vector[0].len = 4;
+    vector[1].base = "test1";
+    vector[1].len = 0;
+    status = shr_q_addv_wait(tq, vector, 2);
+    assert(status == SH_ERR_ARG);
+    vector[1].base = NULL;
+    vector[1].len = 5;
+    status = shr_q_addv_wait(tq, vector, 2);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+static void test_addv_timedwait_errors(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    shr_q_s *tq = NULL;
+    struct timespec ts = {0};
+    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+
+    status = shr_q_addv_timedwait(q, vector, 1, &ts);
+    assert(status == SH_ERR_ARG);
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_IMMUTABLE);
+    assert(status == SH_OK);
+    status = shr_q_addv_timedwait(q, NULL, 1, &ts);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv_timedwait(q, vector, 0, &ts);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv_timedwait(q, vector, 1, NULL);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_addv_timedwait(q, vector, 1, &ts);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_open(&tq, "testq", SQ_READ_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv_timedwait(tq, vector, 1, &ts);
+    assert(status == SH_ERR_STATE);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_open(&tq, "testq", SQ_WRITE_ONLY);
+    assert(status == SH_OK);
+    status = shr_q_addv_timedwait(tq, vector, 1, &ts);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    status = shr_q_addv_timedwait(tq, vector, 1, &ts);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = NULL;
+    vector[0].len = 4;
+    status = shr_q_addv_timedwait(tq, vector, 1, &ts);
+    assert(status == SH_ERR_ARG);
+    vector[0].base = "test";
+    vector[0].len = 4;
+    vector[1].base = "test1";
+    vector[1].len = 0;
+    status = shr_q_addv_timedwait(tq, vector, 2, &ts);
+    assert(status == SH_ERR_ARG);
+    vector[1].base = NULL;
+    vector[1].len = 5;
+    status = shr_q_addv_timedwait(tq, vector, 2, &ts);
+    assert(status == SH_ERR_ARG);
+    status = shr_q_close(&tq);
+    assert(status == SH_OK);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
 static void test_subscription(void)
 {
     sh_status_e status;
@@ -4277,6 +4785,85 @@ static void test_codel_algorithm(void)
 }
 
 
+static void test_vector_operations(void)
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    sq_item_s item = {0};
+    struct timespec ts = {0};
+    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    assert(status == SH_OK);
+    vector[0].base = "token";
+    vector[0].len = 5;
+    status = shr_q_addv(q, vector, 1);
+    assert(status == SH_OK);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "token", 5) == 0);
+    assert(item.vector != NULL);
+    assert(item.vcount == 1);
+    assert(item.vector[0].len == 5);
+    assert(memcmp(item.vector[0].base, "token", 5) == 0);
+    vector[1].base = "test1";
+    vector[1].len = 5;
+    status = shr_q_addv(q, vector, 2);
+    assert(status == SH_OK);
+    vector[1].base = "test2";
+    vector[1].len = 5;
+    status = shr_q_addv_wait(q, vector, 2);
+    assert(status == SH_OK);
+    vector[1].base = "test3";
+    vector[1].len = 5;
+    status = shr_q_addv_timedwait(q, vector, 2, &ts);
+    assert(status == SH_OK);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length != 0);
+    assert(item.value != NULL);
+    assert(item.vector != NULL);
+    assert(item.vcount == 2);
+    assert(item.vector[0].len == 5);
+    assert(memcmp(item.vector[0].base, "token", 5) == 0);
+    assert(item.vector[1].len == 5);
+    assert(memcmp(item.vector[1].base, "test1", 5) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length != 0);
+    assert(item.value != NULL);
+    assert(item.vector != NULL);
+    assert(item.vcount == 2);
+    assert(item.vector[0].len == 5);
+    assert(memcmp(item.vector[0].base, "token", 5) == 0);
+    assert(item.vector[1].len == 5);
+    assert(memcmp(item.vector[1].base, "test2", 5) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length != 0);
+    assert(item.value != NULL);
+    assert(item.vector != NULL);
+    assert(item.vcount == 2);
+    assert(item.vector[0].len == 5);
+    assert(memcmp(item.vector[0].base, "token", 5) == 0);
+    assert(item.vector[1].len == 5);
+    assert(memcmp(item.vector[1].base, "test3", 5) == 0);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
+
 int main(void)
 {
     set_signal_handlers();
@@ -4300,6 +4887,9 @@ int main(void)
     test_remove_wait_errors();
     test_remove_timedwait_errors();
     test_is_valid();
+    test_addv_errors();
+    test_addv_wait_errors();
+    test_addv_timedwait_errors();
 
     // set up to test open and close
     shr_q_s *q;
@@ -4318,6 +4908,7 @@ int main(void)
     test_empty_queue();
     test_single_item_queue();
     test_multi_item_queue();
+    test_vector_operations();
     test_expiration_discard();
     test_codel_algorithm();
 

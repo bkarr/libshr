@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.11.0
+Version: 0.12.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -31,6 +31,7 @@ events
 - Blocked calls can use real time signal for demand calls to implement pull processing model
 - Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes
 - Test name to verify that it is a valid queue
+- Vector operations to add and remove multiple items in a single call
 
 
 #### Working
