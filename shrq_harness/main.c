@@ -207,7 +207,7 @@ void validate_basic_queue(
     pitem_t *pitem;
     shr_q_s *q;
     void *buffer = NULL;
-    int64_t size = 0;
+    size_t size = 0;
     int i;
     int j;
     result = shr_q_create(&q, QNAME, limit, SQ_READWRITE);

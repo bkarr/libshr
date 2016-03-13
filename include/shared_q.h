@@ -101,19 +101,19 @@ typedef enum
 
 typedef struct sq_vec
 {
-    int64_t len;            // length of data
+    size_t len;             // length of data
     void *base;             // pointer to vector data
 } sq_vec_s;
 
-typedef struct sq_item
+typedef struct  sq_item
 {
     sh_status_e status;         // returned status
-    int64_t length;             // length of data being returned
-    void *value;                // pointer to data value being returned
+    size_t length;              // length of data being returned
+     void *value;               // pointer to data value being returned
     struct timespec *timestamp; // pointer to timestamp of add to queue
     void *buffer;               // pointer to data buffer
-    int64_t buf_size;           // size of buffer
-    int32_t vcount;             // vector count
+    size_t buf_size;            // size of buffer
+    int vcount;                 // vector count
     sq_vec_s *vector;           // array of vectors
 } sq_item_s;
 
@@ -153,7 +153,7 @@ typedef struct sq_item
 extern sh_status_e shr_q_create(
     shr_q_s **q,            // address of q struct pointer -- not NULL
     char const * const name,// name of q as a null terminated string -- not NULL
-    uint32_t max_depth,     // max depth allowed at which add of item is blocked
+    unsigned int max_depth, // max depth allowed at which add of item is blocked
     sq_mode_e mode          // read/write mode
 );
 
@@ -297,7 +297,7 @@ extern sh_status_e shr_q_call(
 extern sh_status_e shr_q_add(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     void *value,        // pointer to item -- not NULL
-    int64_t length      // length of item -- greater than 0
+    size_t length       // length of item -- greater than 0
 );
 
 
@@ -316,7 +316,7 @@ extern sh_status_e shr_q_add(
 extern sh_status_e shr_q_add_wait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     void *value,        // pointer to item -- not NULL
-    int64_t length      // length of item -- greater than 0
+    size_t length       // length of item -- greater than 0
 );
 
 
@@ -338,7 +338,7 @@ extern sh_status_e shr_q_add_wait(
 extern sh_status_e shr_q_add_timedwait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     void *value,        // pointer to item -- not NULL
-    int64_t length,     // length of item -- greater than 0
+    size_t length,      // length of item -- greater than 0
     struct timespec *timeout    // timeout value -- not NULL
 );
 
@@ -359,7 +359,7 @@ extern sh_status_e shr_q_add_timedwait(
 extern sh_status_e shr_q_addv(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sq_vec_s *vector,   // pointer to vector of items -- not NULL
-    int64_t vcnt        // count of vector array -- must be >= 1
+    int vcnt            // count of vector array -- must be >= 1
 );
 
 
@@ -378,7 +378,7 @@ extern sh_status_e shr_q_addv(
 extern sh_status_e shr_q_addv_wait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sq_vec_s *vector,   // pointer to vector of items -- not NULL
-    int64_t vcnt        // count of vector array -- must be >= 1
+    int vcnt            // count of vector array -- must be >= 1
 );
 
 
@@ -401,7 +401,7 @@ extern sh_status_e shr_q_addv_wait(
 extern sh_status_e shr_q_addv_timedwait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sq_vec_s *vector,   // pointer to vector of items -- not NULL
-    int64_t vcnt,       // count of vector array -- must be >= 1
+    int vcnt,           // count of vector array -- must be >= 1
     struct timespec *timeout    // timeout value -- not NULL
 );
 
@@ -434,7 +434,7 @@ extern sh_status_e shr_q_addv_timedwait(
 extern sq_item_s shr_q_remove(
     shr_q_s *q,         // pointer to queue structure -- not NULL
     void **buffer,      // address of buffer pointer -- not NULL
-    int64_t *buff_size  // pointer to size of buffer -- not NULL
+    size_t *buff_size   // pointer to size of buffer -- not NULL
 );
 
 
@@ -466,7 +466,7 @@ extern sq_item_s shr_q_remove(
 extern sq_item_s shr_q_remove_wait(
     shr_q_s *q,             // pointer to queue struct -- not NULL
     void **buffer,          // address of buffer pointer -- not NULL
-    int64_t *buff_size      // pointer to size of buffer -- not NULL
+    size_t *buff_size       // pointer to size of buffer -- not NULL
 );
 
 
@@ -500,7 +500,7 @@ extern sq_item_s shr_q_remove_wait(
 extern sq_item_s shr_q_remove_timedwait(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     void **buffer,              // address of buffer pointer -- not NULL
-    int64_t *buff_size,         // pointer to size of buffer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
     struct timespec *timeout    // timeout value -- not NULL
 );
 
@@ -533,7 +533,7 @@ extern char *shr_q_explain(
 extern bool shr_q_exceeds_idle_time(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     time_t lim_secs,            // time limit in seconds
-    long lim_nsecs              // time limie in nanoseconds
+    long lim_nsecs              // time limit in nanoseconds
 );
 
 
@@ -541,7 +541,7 @@ extern bool shr_q_exceeds_idle_time(
     shr_q_count -- returns count of items on queue, or -1 if it fails
 
 */
-extern int64_t shr_q_count(
+extern long shr_q_count(
     shr_q_s *q                  // pointer to queue struct -- not NULL
 );
 
@@ -558,7 +558,7 @@ extern int64_t shr_q_count(
 */
 extern sh_status_e shr_q_level(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
-    uint32_t level              // level at which to generate level event
+    int level                   // level at which to generate level event
 );
 
 
@@ -708,7 +708,7 @@ extern sh_status_e shr_q_prod(
     shr_q_call_count -- returns count of blocked remove calls, or -1 if it fails
 
 */
-extern int64_t shr_q_call_count(
+extern long shr_q_call_count(
     shr_q_s *q                  // pointer to queue struct -- not NULL
 );
 

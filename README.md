@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.12.0
+Version: 0.13.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -51,8 +51,8 @@ accessed safely by using a shared token passed between processes
 ***
 
 ## Dependencies
-- compiler that supports C11 standard atomics (gcc 4.9.3)
-- x86_64 CPU architecture (little endian integers and cmpxchg16b instruction)
+- compiler that supports C11 standard atomics or gcc atomic builtins
+- x86 or x86_64 (little endian integers)
 
 ## Build
     ~ $ git clone https://github.com/bkarr/libshr.git
