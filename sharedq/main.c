@@ -277,11 +277,11 @@ void sharedq_help(int argc, char *argv[], int index)
 }
 
 
-int64_t sharedq_atol(
+long sharedq_atol(
     char *array,
     int length
 )   {
-    int64_t result = 0;
+    long result = 0;
     int i = 0;
     while (array[i] == ' ' && i < length) {
         i++;
@@ -377,7 +377,7 @@ void sharedq_create(int argc, char *argv[], int index)
         return;
     }
 
-    int64_t maxsize = 0;
+    long maxsize = 0;
     if ((argc - index + 1) == 4) {
         maxsize = sharedq_atol(argv[index + 2], strlen(argv[index + 2]));
         if (maxsize < 0) {
@@ -674,7 +674,7 @@ void sharedq_add(int argc, char *argv[], int index)
 
 void hex_format(
     uint8_t *data,
-    int64_t length
+    long length
 )   {
     int32_t output = 0;
 
@@ -1095,7 +1095,7 @@ void sharedq_level(int argc, char *argv[], int index)
         return;
     }
 
-    int64_t depth = 0;
+    long depth = 0;
     if ((argc - index + 1) == 4) {
         depth = sharedq_atol(argv[index + 2], strlen(argv[index + 2]));
         if (depth < 0) {
@@ -1148,7 +1148,7 @@ void sharedq_limit(int argc, char *argv[], int index)
         return;
     }
 
-    int64_t nano = 0;
+    long nano = 0;
     if ((argc - index + 1) == 5) {
         nano = sharedq_atol(argv[index + 3], strlen(argv[index + 3]));
         if (nano < 0) {
@@ -1156,7 +1156,7 @@ void sharedq_limit(int argc, char *argv[], int index)
             return;
         }
     }
-    int64_t sec = 0;
+    long sec = 0;
     if ((argc - index + 1) >= 4) {
         sec = sharedq_atol(argv[index + 2], strlen(argv[index + 2]));
         if (sec < 0) {
@@ -1219,7 +1219,7 @@ void pull_from_file(
 
     char *line = NULL;
     size_t ln_count = 0;
-    int64_t blockers = shr_q_call_count(q);
+    long blockers = shr_q_call_count(q);
     printf("%li blocked callers\n", blockers);
     struct timespec start;
     clock_gettime(CLOCK_REALTIME, &start);
@@ -1310,7 +1310,7 @@ void pull_from_stdin(
     struct signalfd_siginfo fd_si;
     char *line = NULL;
 
-    int64_t blockers = shr_q_call_count(q);
+    long blockers = shr_q_call_count(q);
     for (int i = 0; i < blockers; i++) {
         if (shr_q_prod(q) != SH_OK) {
             printf("sharedq:  unable to prod pull process\n");

@@ -6,9 +6,16 @@ OBJECTS = ../src/shared_q.o
 LIB = libshr.a
 SHARED_LIB = libshr.so
 
-all: $(OBJECTS)
+all: all64
+
+all64: $(OBJECTS)
 	@ar -r $(LIB) $(OBJECTS)
 	@gcc -shared -o $(SHARED_LIB) $(OBJECTS)
+	@chmod 0755 $(SHARED_LIB)
+
+all32: $(OBJECTS)
+	@ar -r $(LIB) $(OBJECTS)
+	@gcc -m32 -shared -o $(SHARED_LIB) $(OBJECTS)
 	@chmod 0755 $(SHARED_LIB)
 
 
@@ -23,4 +30,4 @@ install:
 	@cp $(SHARED_LIB) /usr/lib/.
 	@ldconfig
 
-.PHONY: all clean install
+.PHONY: all all64 all32 clean install

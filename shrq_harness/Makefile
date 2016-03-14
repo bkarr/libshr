@@ -6,10 +6,15 @@ CC = gcc
 EXE = shrq_harness
 LIB = -L../lib -lshr -lrt -lpthread
 
-#CFLAGS = -I../include -DMTHRD -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
-CFLAGS = -I../include -static -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all: all64
 
-all: main
+#all64: CFLAGS = -I../include -DMTHRD -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all64: CFLAGS = -I../include -static -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all64: main
+
+all32: CFLAGS = -m32 -I../include -static -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all32: main
+
 
 %: %.c
 	@$(CC) $< $(CFLAGS) $(LIB)
@@ -19,4 +24,4 @@ clean:
 		rm ./$(EXE); \
 	fi
 
-.PHONY: all clean
+.PHONY: all all64 all32 clean

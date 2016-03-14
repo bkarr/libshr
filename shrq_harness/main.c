@@ -71,15 +71,13 @@ struct proc_item
     int id;
 };
 
-static int64_t iterations;
+static long iterations;
 static volatile unsigned long input = 0;
 static volatile unsigned long output = 0;
 static volatile unsigned long verif = 0;
-// static volatile unsigned long count1 = 0;
-// static volatile unsigned long count2 = 0;
 static shr_q_s *queue;
 static int waiting = 0;
-static int64_t msg_size = DEFAULT_SIZE;
+static long msg_size = DEFAULT_SIZE;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -132,9 +130,7 @@ void *validate_producer(
     ptr = (unsigned long *)malloc(msg_size);
     assert(ptr);
     for (i = 0; i < iterations; ++i) {
-        //printf("add %lx\n", (uint64_t)ptr);
         *ptr = AAF(&input, 1);
-        //printf("%li\n", *ptr);
         total += *ptr;
         while (shr_q_add(q, (void *)ptr, msg_size) != SH_OK)
             printf("add failed\n");
@@ -185,12 +181,9 @@ void *validate_consumer(
         assert(item.value);
         ptr = item.value;
         if (ptr) {
-            //printf("remove %lx\n", (uint64_t)ptr);
             total += *ptr;
-            // AAF(&count1, 1);
             ptr = 0;
         }
-        // AAF(&count2, 1);
     }
     AAF(&output, total);
 #ifndef MTHRD
@@ -269,7 +262,7 @@ int main(
     int i;
     int j;
     pthread_t *t;
-    int64_t thread_count;
+    long thread_count;
     int cpu_count;
     int sys_cpu_count;
     int total;

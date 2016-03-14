@@ -49,11 +49,13 @@ typedef int32_t halfword;
 #define SZ_SHIFT 3
 #define DELTA UINT_MAX
 #define REM 7
+#define SHRQ "shrq"
 #else
 typedef int16_t halfword;
 #define SZ_SHIFT 2
 #define DELTA USHRT_MAX
 #define REM 3
+#define SHRQ "sq32"
 #endif
 
 
@@ -67,7 +69,6 @@ typedef atomic_long atomictype;
 // define unchanging file system related constants
 #define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 #define SHR_OBJ_DIR "/dev/shm/"
-#define SHRQ "shrq"
 
 // define functional flags
 #define FLAG_ACTIVATED 1
@@ -286,75 +287,9 @@ static view_s insure_in_range(shr_q_s *q, long slot);
 
 #if (__STDC_VERSION__ < 201112L)
 
-#ifdef __x86_64__
+#define AFS(mem, v) __sync_fetch_and_sub(mem, v)
+#define AFA(mem, v) __sync_fetch_and_add(mem, v)
 
-/*
-    AFS -- atomic fetch and subtract 64-bit
-*/
-static inline long AFS(
-    volatile long *mem,
-    long add
-)   {
-    add = -add;
-    __asm__ __volatile__("lock; xaddq %0,%1"
-    :"+r" (add),
-    "+m" (*mem)
-    : : "memory");
-    return add;
-}
-
-#else
-
-/*
-    AFS -- atomic fetch and subtract 32-bit
-*/
-static inline long AFS(
-    volatile long *mem,
-    long add
-)   {
-    add = -add;
-    __asm__ __volatile__("lock; xaddl %0,%1"
-    :"+r" (add),
-    "+m" (*mem)
-    : : "memory");
-    return add;
-}
-
-#endif
-
-#ifdef __x86_64__
-
-/*
-    AFA -- atomic fetch and add 64-bit
-*/
-static inline long AFA(
-    volatile long *mem,
-    long add
-)   {
-    __asm__ __volatile__("lock; xaddq %0,%1"
-    :"+r" (add),
-    "+m" (*mem)
-    : : "memory");
-    return add;
-}
-
-#else
-
-/*
-    AFA -- atomic fetch and add 32-bit
-*/
-static inline long AFA(
-    volatile long *mem,
-    long add
-)   {
-    __asm__ __volatile__("lock; xaddl %0,%1"
-    :"+r" (add),
-    "+m" (*mem)
-    : : "memory");
-    return add;
-}
-
-#endif
 
 /*
     CAS -- atomic compare and swap
@@ -957,6 +892,44 @@ static long find_leaf(
 }
 
 
+// static long walk_tree(
+//     shr_q_s *q,         // pointer to queue struct
+//     long count,         // number of slots to return
+//     long ref_index      // index node reference to begin search
+// )   {
+//     return 0;
+// }
+//
+// static long find_best_fit(
+//     shr_q_s *q,         // pointer to queue struct
+//     long count,         // number of slots to return
+//     long ref_index      // index node reference to begin search
+// )   {
+//     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
+//     long *array = view.extent->array;
+//     idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
+//     uint8_t *key = (uint8_t*)&count;
+//     long node_slot = ref_index;
+//
+//     while (ref->flag < 0) {
+//         node_slot = ref->next;
+//         view = insure_in_range(q, node_slot);
+//         if (view.slot == 0) {
+//             return 0;
+//         }
+//         array = view.extent->array;
+//         idx_node_s *node = (idx_node_s*)&array[node_slot];
+//         long direction = (1 + (ref->bits | key[ref->byte])) >> 8;
+//         ref = &node->child[direction];
+//     }
+//     view = insure_in_range(q, ref->next);
+//     if (view.slot == 0) {
+//         return 0;
+//     }
+//     return ref->next;
+// }
+
+
 static sh_status_e add_idx_gap(
     shr_q_s *q,         // pointer to queue struct
     long slot,          // start of slot range
@@ -1058,9 +1031,13 @@ static sh_status_e insert_idx_gap(
     uint8_t *key = (uint8_t*)&count;
 
     /*
-        compared right to left because integers in x86_64 are little endian
+        different oderings needed for endianness
     */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    for (byte = 0; byte < sizeof(long) ; byte++) {
+#else
     for (byte = sizeof(long) - 1; byte >= 0 ; byte--) {
+#endif
         bits = key[byte]^leaf->key[byte];
         if (bits) {
             break;
@@ -4033,31 +4010,31 @@ static void test_free_data_array4(long *array)
     view_s view = alloc_data_slots(q, array[0]);
     slot[0] = view.slot;
     assert(slot[0] > 0);
-    // view = alloc_data_slots(q, array[1]);
-    // slot[1] = view.slot;
-    // assert(slot[1] > 0);
-    // view = alloc_data_slots(q, array[2]);
-    // slot[2] = view.slot;
-    // assert(slot[2] > 0);
-    // view = alloc_data_slots(q, array[3]);
-    // slot[3] = view.slot;
-    // assert(slot[3] > 0);
+    view = alloc_data_slots(q, array[1]);
+    slot[1] = view.slot;
+    assert(slot[1] > 0);
+    view = alloc_data_slots(q, array[2]);
+    slot[2] = view.slot;
+    assert(slot[2] > 0);
+    view = alloc_data_slots(q, array[3]);
+    slot[3] = view.slot;
+    assert(slot[3] > 0);
     status = free_data_slots(q, slot[0], array[0]);
     assert(status == SH_OK);
-    // status = free_data_slots(q, slot[1], array[1]);
-    // assert(status == SH_OK);
-    // status = free_data_slots(q, slot[2], array[2]);
-    // assert(status == SH_OK);
-    // status = free_data_slots(q, slot[3], array[3]);
-    // assert(status == SH_OK);
+    status = free_data_slots(q, slot[1], array[1]);
+    assert(status == SH_OK);
+    status = free_data_slots(q, slot[2], array[2]);
+    assert(status == SH_OK);
+    status = free_data_slots(q, slot[3], array[3]);
+    assert(status == SH_OK);
     view = alloc_data_slots(q, array[0]);
     assert(view.slot == slot[0]);
-    // view = alloc_data_slots(q, array[1]);
-    // assert(view.slot == slot[1]);
-    // view = alloc_data_slots(q, array[2]);
-    // assert(view.slot == slot[2]);
-    // view = alloc_data_slots(q, array[3]);
-    // assert(view.slot == slot[3]);
+    view = alloc_data_slots(q, array[1]);
+    assert(view.slot == slot[1]);
+    view = alloc_data_slots(q, array[2]);
+    assert(view.slot == slot[2]);
+    view = alloc_data_slots(q, array[3]);
+    assert(view.slot == slot[3]);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
@@ -4067,14 +4044,14 @@ static void test_free_data_slots(void)
 {
     long test1[4] = {5, 6, 7, 8};
     test_free_data_array4(test1);
-    // long test2[4] = {8, 7, 6, 5};
-    // test_free_data_array4(test2);
-    // long test3[4] = {8, 6, 5, 7};
-    // test_free_data_array4(test3);
-    // long test4[4] = {8, 5, 7, 6};
-    // test_free_data_array4(test4);
-    // long test5[4] = {5, 8, 6, 7};
-    // test_free_data_array4(test5);
+    long test2[4] = {8, 7, 6, 5};
+    test_free_data_array4(test2);
+    long test3[4] = {8, 6, 5, 7};
+    test_free_data_array4(test3);
+    long test4[4] = {8, 5, 7, 6};
+    test_free_data_array4(test4);
+    long test5[4] = {5, 8, 6, 7};
+    test_free_data_array4(test5);
 }
 
 static void test_large_data_allocation(void)

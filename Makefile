@@ -17,6 +17,24 @@ all:
 		cd ..; \
 	done
 
+all64:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) all64; \
+		cd ..; \
+	done
+
+all32:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) all32; \
+		cd ..; \
+	done
+
 clean:
 	@set -e
 	@for i in $(SUBDIRS); \
@@ -53,4 +71,4 @@ examples:
 		cd ..; \
 	done
 
-.PHONY: all clean check install examples
+.PHONY: all all64 all32 clean check install examples

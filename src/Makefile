@@ -7,21 +7,30 @@ OBJECTS = shared_q.o
 TESTEXE = test_shrq
 LIB = -lrt -lpthread
 
-all: CFLAGS = -mcx16 -I../include -c -g3 -O1 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
-all: shared_q
+all: all64
+
+all64: CFLAGS = -mcx16 -I../include -c -g3 -O1 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+all64: shared_q
 
 all32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O1 -fPIC -std=gnu99 -Wall -o "$@".o
 all32: shared_q
 
-debug: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
-debug: shared_q
+debug: debug64
+
+debug64: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+debug64: shared_q
+
+debug32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+debug32: shared_q
+
+check: check64
 
 check32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -DTESTMAIN -g3 -O0 -std=gnu99 -Wall -o $(TESTEXE)
 check32: clean shared_q
 	./$(TESTEXE)
 
-check: CFLAGS = -mcx16 -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
-check: clean shared_q
+check64: CFLAGS = -mcx16 -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
+check64: clean shared_q
 	./$(TESTEXE)
 
 
@@ -36,4 +45,4 @@ clean:
 		rm $(OBJECTS); \
 	fi
 
-.PHONY: all all32 clean check check32
+.PHONY: all all64 all32 debug debug64 debug32 check check64 check32 clean
