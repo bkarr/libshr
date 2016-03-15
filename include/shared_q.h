@@ -99,8 +99,26 @@ typedef enum
     SQ_READWRITE            // queue instance can add/remove items
 } sq_mode_e;
 
+typedef enum
+{
+    SQ_VECTOR_T = 0,        // vector of multiple types
+    SQ_STRM_T,              // unspecified byte stream
+    SQ_ASCII_T,             // ascii string (char values 0-127)
+    SQ_UTF8_T,              // utf-8 string
+    SQ_UTF16_T,             // utf-16 string
+    SQ_JSON_T,              // json string
+    SQ_XML_T,               // xml string
+    SQ_STRUCT_T,            // binary struct
+} sq_type_e;
+
 typedef struct sq_vec
 {
+#ifdef __x86_64__
+    uint32_t _zeroes_;      // pad for alignment
+    sq_type_e type;         // type of data in vector
+#else
+    sq_type_e type;         // type of data in vector
+#endif
     size_t len;             // length of data
     void *base;             // pointer to vector data
 } sq_vec_s;
@@ -108,6 +126,7 @@ typedef struct sq_vec
 typedef struct  sq_item
 {
     sh_status_e status;         // returned status
+    sq_type_e type;             // data type
     size_t length;              // length of data being returned
      void *value;               // pointer to data value being returned
     struct timespec *timestamp; // pointer to timestamp of add to queue

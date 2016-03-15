@@ -44,5 +44,8 @@ clean:
 	@if test -f $(OBJECTS); then \
 		rm $(OBJECTS); \
 	fi
+	@if test -f core*; then \
+		rm core*; \
+	fi
 
 .PHONY: all all64 all32 debug debug64 debug32 check check64 check32 clean

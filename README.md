@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.13.1
+Version: 0.14.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -32,6 +32,7 @@ events
 - Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes
 - Test name to verify that it is a valid queue
 - Vector operations to add and remove multiple items in a single call
+- Vectors can pass type information
 
 
 #### Working

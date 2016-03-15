@@ -112,14 +112,15 @@ enum shr_q_constants
 {
     PAGE_SIZE = 4096,   // initial size of memory mapped file for queue
     NODE_SIZE = 4,      // node slot count
-    DATA_HDR = 5,       // data header
+    DATA_HDR = 6,       // data header
     EVENT_OFFSET = 2,   // offset in node for event for queued item
     VALUE_OFFSET = 3,   // offset in node for data slot for queued item
     DATA_SLOTS = 0,     // total data slots (including header)
     TM_SEC = 1,         // offset for data timestamp seconds value
     TM_NSEC = 2,        // offset for data timestamp nanoseconds value
-    VEC_CNT = 3,        // offset for vector count
-    DATA_LENGTH = 4,    // offset for data length
+    TYPE = 3,           // offset of type indicator
+    VEC_CNT = 4,        // offset for vector count
+    DATA_LENGTH = 5,    // offset for data length
 };
 
 // define queue header slot offsets
@@ -1419,7 +1420,8 @@ static inline long calc_data_slots(
 static long copy_value(
     shr_q_s *q,         // pointer to queue struct
     void *value,        // pointer to value data
-    long length         // length of data
+    long length,        // length of data
+    sq_type_e type      // data type
 )   {
     if (q == NULL || value == NULL || length <= 0) {
         return 0;
@@ -1436,6 +1438,7 @@ static long copy_value(
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
+        array[current + TYPE] = type;
         array[current + VEC_CNT] = 1;
         array[current + DATA_LENGTH] = length;
         memcpy(&array[current + DATA_HDR], value, length);
@@ -1452,8 +1455,8 @@ static long calc_vector_slots(
     long space = DATA_HDR;
 
     for(int i = 0; i < vcnt; i++) {
-        // increment for embedded data length
-        space++;
+        // increment for embedded for type and data length
+        space += 2;
         // calculate number of slots needed for data
         space += (vector[i].len >> SZ_SHIFT);
         // account for remainder
@@ -1486,14 +1489,16 @@ static long copy_vector(
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
+        array[current + TYPE] = SQ_VECTOR_T;
         array[current + VEC_CNT] = vcnt;
         array[current + DATA_LENGTH] = (space - DATA_HDR) << SZ_SHIFT;
         long slot = current;
         slot += DATA_HDR;
         for (int i = 0; i < vcnt; i++) {
-            if (vector[i].len <= 0 || vector[i].base == NULL) {
+            if (vector[i].type <= 0 || vector[i].len <= 0 || vector[i].base == NULL) {
                 return -1;
             }
+            array[slot++] = vector[i].type;
             array[slot++] = vector[i].len;
             memcpy(&array[slot], vector[i].base, vector[i].len);
             slot += (vector[i].len >> SZ_SHIFT);
@@ -1759,7 +1764,8 @@ static sh_status_e enq_data(
 static sh_status_e enq(
     shr_q_s *q,         // pointer to queue, not NULL
     void *value,        // pointer to item, not NULL
-    size_t length       // length of item
+    size_t length,      // length of item
+    sq_type_e type      // data type
 )   {
     if (q == NULL || value == NULL || length <= 0) {
         return SH_ERR_ARG;
@@ -1767,7 +1773,7 @@ static sh_status_e enq(
     long data_slot;
 
     // allocate space and copy value
-    data_slot = copy_value(q, value, length);
+    data_slot = copy_value(q, value, length, type);
     if (data_slot == 0) {
         return SH_ERR_NOMEM;
     }
@@ -1905,17 +1911,21 @@ static void copy_to_buffer(
     memcpy(*buffer, &array[data_slot + 1], size);
     item->buffer = *buffer;
     item->buf_size = size;
+    item->type = array[data_slot + TYPE];
     item->length = array[data_slot + DATA_LENGTH];
     item->timestamp = *buffer;
     item->value = (uint8_t*)*buffer + ((DATA_HDR - 1) * sizeof(long));
     item->vcount = array[data_slot + VEC_CNT];
     item->vector = (sq_vec_s*)((uint8_t*)*buffer + size);
     if (item->vcount == 1) {
+        item->vector[0].type = (sq_type_e)array[data_slot + TYPE];
         item->vector[0].len = item->length;
         item->vector[0].base = item->value;
     } else {
         uint8_t *current = (uint8_t*)item->value;
         for (int i = 0; i < item->vcount; i++) {
+            item->vector[i].type = (sq_type_e)*(long*)current;
+            current += sizeof(long);
             item->vector[i].len = *(long*)current;
             current += sizeof(long);
             item->vector[i].base = current;
@@ -2536,7 +2546,7 @@ extern sh_status_e shr_q_add(
         }
     }
 
-    sh_status_e status = enq(q, value, length);
+    sh_status_e status = enq(q, value, length, SQ_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -2603,7 +2613,7 @@ extern sh_status_e shr_q_add_wait(
         }
     }
 
-    sh_status_e status = enq(q, value, length);
+    sh_status_e status = enq(q, value, length, SQ_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -2679,7 +2689,7 @@ extern sh_status_e shr_q_add_timedwait(
         }
     }
 
-    sh_status_e status = enq(q, value, length);
+    sh_status_e status = enq(q, value, length, SQ_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -2746,7 +2756,7 @@ extern sh_status_e shr_q_addv(
 
     sh_status_e status;
     if (vcnt == 1) {
-        status = enq(q, vector[0].base, vector[0].len);
+        status = enq(q, vector[0].base, vector[0].len, vector[0].type);
     } else {
         status = enqv(q, vector, vcnt);
     }
@@ -2817,7 +2827,7 @@ extern sh_status_e shr_q_addv_wait(
 
     sh_status_e status;
     if (vcnt == 1) {
-        status = enq(q, vector[0].base, vector[0].len);
+        status = enq(q, vector[0].base, vector[0].len, vector[0].type);
     } else {
         status = enqv(q, vector, vcnt);
     }
@@ -2899,7 +2909,7 @@ extern sh_status_e shr_q_addv_timedwait(
 
     sh_status_e status;
     if (vcnt == 1) {
-        status = enq(q, vector[0].base, vector[0].len);
+        status = enq(q, vector[0].base, vector[0].len, vector[0].type);
     } else {
         status = enqv(q, vector, vcnt);
     }
@@ -4862,8 +4872,10 @@ static void test_vector_operations(void)
     shr_q_s *q = NULL;
     sq_item_s item = {0};
     struct timespec ts = {0};
-    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+    sq_vec_s vector[2] = {{0}, {0}};
 
+    vector[0].type = SQ_ASCII_T;
+    vector[1].type = SQ_ASCII_T;
     shm_unlink("testq");
     status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
     assert(status == SH_OK);
@@ -4880,6 +4892,7 @@ static void test_vector_operations(void)
     assert(memcmp(item.value, "token", 5) == 0);
     assert(item.vector != NULL);
     assert(item.vcount == 1);
+    assert(item.vector[0].type == SQ_ASCII_T);
     assert(item.vector[0].len == 5);
     assert(memcmp(item.vector[0].base, "token", 5) == 0);
     vector[1].base = "test1";
@@ -4926,8 +4939,10 @@ static void test_vector_operations(void)
     assert(item.value != NULL);
     assert(item.vector != NULL);
     assert(item.vcount == 2);
+    assert(item.vector[0].type == SQ_ASCII_T);
     assert(item.vector[0].len == 5);
     assert(memcmp(item.vector[0].base, "token", 5) == 0);
+    assert(item.vector[0].type == SQ_ASCII_T);
     assert(item.vector[1].len == 5);
     assert(memcmp(item.vector[1].base, "test3", 5) == 0);
     status = shr_q_destroy(&q);
