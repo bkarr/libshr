@@ -110,17 +110,19 @@ typedef atomic_long atomictype;
 // define useful integer constants (mostly sizes and offsets)
 enum shr_q_constants
 {
-    PAGE_SIZE = 4096,   // initial size of memory mapped file for queue
-    NODE_SIZE = 4,      // node slot count
-    DATA_HDR = 6,       // data header
-    EVENT_OFFSET = 2,   // offset in node for event for queued item
-    VALUE_OFFSET = 3,   // offset in node for data slot for queued item
-    DATA_SLOTS = 0,     // total data slots (including header)
-    TM_SEC = 1,         // offset for data timestamp seconds value
-    TM_NSEC = 2,        // offset for data timestamp nanoseconds value
-    TYPE = 3,           // offset of type indicator
-    VEC_CNT = 4,        // offset for vector count
-    DATA_LENGTH = 5,    // offset for data length
+    PAGE_SIZE = 4096,       // initial size of memory mapped file for queue
+    NODE_SIZE = 4,          // node slot count
+    DATA_HDR = 6,           // data header
+    EVENT_OFFSET = 2,       // offset in node for event for queued item
+    VALUE_OFFSET = 3,       // offset in node for data slot for queued item
+    DATA_SLOTS = 0,         // total data slots (including header)
+    TM_SEC = 1,             // offset for data timestamp seconds value
+    TM_NSEC = 2,            // offset for data timestamp nanoseconds value
+    TYPE = 3,               // offset of type indicator
+    VEC_CNT = 4,            // offset for vector count
+    DATA_LENGTH = 5,        // offset for data length
+    TSTACK_DEPTH = 32,      // depth of stack for critbit trie search
+    TSTACK_BRANCHES = 16,   // number of branches to search for larger memory
 };
 
 // define queue header slot offsets
@@ -893,42 +895,105 @@ static long find_leaf(
 }
 
 
-// static long walk_tree(
-//     shr_q_s *q,         // pointer to queue struct
-//     long count,         // number of slots to return
-//     long ref_index      // index node reference to begin search
-// )   {
-//     return 0;
-// }
-//
-// static long find_best_fit(
-//     shr_q_s *q,         // pointer to queue struct
-//     long count,         // number of slots to return
-//     long ref_index      // index node reference to begin search
-// )   {
-//     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
-//     long *array = view.extent->array;
-//     idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
-//     uint8_t *key = (uint8_t*)&count;
-//     long node_slot = ref_index;
-//
-//     while (ref->flag < 0) {
-//         node_slot = ref->next;
-//         view = insure_in_range(q, node_slot);
-//         if (view.slot == 0) {
-//             return 0;
-//         }
-//         array = view.extent->array;
-//         idx_node_s *node = (idx_node_s*)&array[node_slot];
-//         long direction = (1 + (ref->bits | key[ref->byte])) >> 8;
-//         ref = &node->child[direction];
-//     }
-//     view = insure_in_range(q, ref->next);
-//     if (view.slot == 0) {
-//         return 0;
-//     }
-//     return ref->next;
-// }
+static long walk_tree(
+    shr_q_s *q,         // pointer to queue struct
+    long count,         // number of slots to return
+    long *stack,        // stack of node branches to search
+    long size,          // depth of stack array
+    long top            // top of stack
+)   {
+    view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
+    long *array;
+    long retries = TSTACK_BRANCHES;
+
+    while (top > 0 && (retries--)) {
+        long ref_index = stack[--top];
+        view = insure_in_range(q, ref_index);
+        if (view.slot != ref_index) {
+            return 0;
+        }
+        array = view.extent->array;
+        idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
+        if (ref->flag >= 0) {
+            view = insure_in_range(q, ref->next);
+            if (view.slot != ref->next) {
+                return 0;
+            }
+            array = view.extent->array;
+            idx_leaf_s *leaf = (idx_leaf_s*)&array[ref->next];
+            if (leaf->count >= count && leaf->allocs != 0) {
+                return ref->next;
+            }
+            continue;
+        }
+        view = insure_in_range(q, ref->next);
+        if (view.slot != ref->next) {
+            return 0;
+        }
+        array = view.extent->array;
+        idx_node_s *node = (idx_node_s*)&array[ref->next];
+        if (node->child[1].next != 0) {
+            if (top >= TSTACK_DEPTH) {
+                return 0;
+            }
+            stack[top] = ref->next + 2;
+            top++;
+        }
+        if (node->child[0].next != 0) {
+            if (top >= TSTACK_DEPTH) {
+                return 0;
+            }
+            stack[top] = ref->next;
+            top++;
+        }
+    }
+    return 0;
+}
+
+static long find_first_fit(
+    shr_q_s *q,         // pointer to queue struct
+    long count,         // number of slots to return
+    long ref_index      // index node reference to begin search
+)   {
+    long stack[TSTACK_DEPTH] = {0};
+    long top = 0;
+    view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
+    long *array = view.extent->array;
+    idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
+    uint8_t *key = (uint8_t*)&count;
+    long node_slot = ref_index;
+
+    while (ref->flag < 0) {
+        node_slot = ref->next;
+        view = insure_in_range(q, node_slot);
+        if (view.slot == 0) {
+            return 0;
+        }
+        array = view.extent->array;
+        idx_node_s *node = (idx_node_s*)&array[node_slot];
+        long direction = (1 + (ref->bits | key[ref->byte])) >> 8;
+        ref = &node->child[direction];
+        // save branch not taken on stack
+        if (!direction) {
+            if (view.slot == 0) {
+                return 0;
+            }
+            if (node->child[1].next != 0) {
+                stack[top++] = node_slot + 2;
+            }
+        }
+    }
+    view = insure_in_range(q, ref->next);
+    if (view.slot == 0) {
+        return 0;
+    }
+    array = view.extent->array;
+    idx_leaf_s *leaf = (idx_leaf_s*)&array[view.slot];
+    if (leaf->count >= count && leaf->allocs != 0) {
+        return ref->next;
+    }
+    return walk_tree(q, count, stack, TSTACK_DEPTH, top);
+}
 
 
 static sh_status_e add_idx_gap(
@@ -1032,7 +1097,7 @@ static sh_status_e insert_idx_gap(
     uint8_t *key = (uint8_t*)&count;
 
     /*
-        different oderings needed for endianness
+        different orderings needed for endianness
     */
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
     for (byte = 0; byte < sizeof(long) ; byte++) {
@@ -1137,9 +1202,13 @@ static sh_status_e free_data_gap(
         uint8_t bits = 0;
         uint8_t *key = (uint8_t*)&count;
         /*
-            compared right to left because integers in x86_64 are little endian
+            different orderings needed for endianness
         */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        for (long byte = 0; byte < sizeof(long) ; byte++) {
+#else
         for (long byte = sizeof(long) - 1; byte >= 0 ; byte--) {
+#endif
             bits = key[byte]^leaf->key[byte];
             if (bits) {
                 break;
@@ -1270,10 +1339,12 @@ static sh_status_e insert_idx_node(
 
 static sh_status_e free_data_slots(
     shr_q_s *q,         // pointer to queue struct
-    long slot,          // start of slot range
-    long count          // number of slots to return
+    long slot           // start of slot range
 )   {
     sh_status_e status = SH_RETRY;
+
+    long *array = q->current->array;
+    long count = array[slot];
 
     while (status == SH_RETRY) {
         // check if tree is empty
@@ -1294,11 +1365,15 @@ static sh_status_e free_data_slots(
         // evaluate differences in keys
         uint8_t bits = 0;
         uint8_t *key = (uint8_t*)&count;
-        /*
-            compared right to left because integers on x86 are little endian
-        */
         long byte;
+        /*
+            different orderings needed for endianness
+        */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        for (byte = 0; byte < sizeof(long) ; byte++) {
+#else
         for (byte = sizeof(long) - 1; byte >= 0 ; byte--) {
+#endif
             bits = key[byte]^leaf->key[byte];
             if (bits) {
                 break;
@@ -1325,14 +1400,14 @@ static long lookup_freed_data(
     if (q == NULL || slots < 2) {
         return 0;
     }
-    long index = find_leaf(q, slots, ROOT_FREE);
+    long index = find_first_fit(q, slots, ROOT_FREE);
     if (index == 0) {
         return 0;
     }
     view_s view = insure_in_range(q, index);
     long *array = view.extent->array;
     idx_leaf_s *leaf = (idx_leaf_s*)&array[index];
-    if (slots != leaf->count) {
+    if (slots > leaf->count) {
         return 0;
     }
     if (leaf->allocs == 0) {
@@ -1346,6 +1421,13 @@ static long lookup_freed_data(
         after.low = (volatile long)array[before.low];
         after.high = before.high + 1;
     } while (before.low != 0 && !DWCAS((DWORD*)&leaf->allocs, &before, after));
+    if (leaf->count < 2 * slots) {
+        array[before.low] = leaf->count;
+    } else {
+        array[before.low + slots] = leaf->count - slots;
+        free_data_slots(q, before.low + slots);
+        array[before.low] = slots;
+    }
     return before.low;
 }
 
@@ -1368,7 +1450,7 @@ static view_s alloc_data_slots(
             view = insure_in_range(q, alloc_start);
             array = view.extent->array;
             if (view.slot != 0) {
-                memset(&array[alloc_start], 0, slots << SZ_SHIFT);
+                memset(&array[alloc_start + 1], 0, (slots - 1) << SZ_SHIFT);
                 return view;
             }
         }
@@ -1386,6 +1468,7 @@ static view_s alloc_data_slots(
             after.high = alloc_start;
             if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, after)) {
                 view.slot = alloc_start;
+                array[alloc_start] = slots;
                 return view;
             }
             view.extent = q->current;
@@ -1717,7 +1800,7 @@ static sh_status_e enq_data(
     // allocate queue node
     view_s view = alloc_node_slots(q);
     if (view.slot == 0) {
-        free_data_slots(q, data_slot, array[data_slot + DATA_SLOTS]);
+        free_data_slots(q, data_slot);
         return SH_ERR_NOMEM;
     }
     node = view.slot;
@@ -1997,12 +2080,12 @@ static sq_item_s deq(
 
         if (expired && is_discard_on_expire(array)) {
             memset(&item, 0, sizeof(item));
-            free_data_slots(q, data_slot, array[data_slot]);
+            free_data_slots(q, data_slot);
             item.status = SH_ERR_EXIST;
             break;
         }
 
-        free_data_slots(q, data_slot, array[data_slot]);
+        free_data_slots(q, data_slot);
         item.status = SH_OK;
         break;
     }
@@ -2183,6 +2266,10 @@ extern sh_status_e shr_q_open(
     status = validate_existence(name, &size);
     if (status) {
         return status;
+    }
+
+    if ((size < PAGE_SIZE) || (size % PAGE_SIZE != 0)){
+        return SH_ERR_STATE;
     }
 
     *q = calloc(1, sizeof(shr_q_s));
@@ -3450,7 +3537,7 @@ extern sh_status_e shr_q_clean(
 
         // free queue node
         add_end(q, head, FREE_TAIL);
-        free_data_slots(q, data_slot, array[data_slot]);
+        free_data_slots(q, data_slot);
 
         while (sem_post((sem_t*)&q->current->array[WRITE_SEM]) < 0) {
             if (errno == EINVAL) {
@@ -4029,13 +4116,13 @@ static void test_free_data_array4(long *array)
     view = alloc_data_slots(q, array[3]);
     slot[3] = view.slot;
     assert(slot[3] > 0);
-    status = free_data_slots(q, slot[0], array[0]);
+    status = free_data_slots(q, slot[0]);
     assert(status == SH_OK);
-    status = free_data_slots(q, slot[1], array[1]);
+    status = free_data_slots(q, slot[1]);
     assert(status == SH_OK);
-    status = free_data_slots(q, slot[2], array[2]);
+    status = free_data_slots(q, slot[2]);
     assert(status == SH_OK);
-    status = free_data_slots(q, slot[3], array[3]);
+    status = free_data_slots(q, slot[3]);
     assert(status == SH_OK);
     view = alloc_data_slots(q, array[0]);
     assert(view.slot == slot[0]);
@@ -4064,6 +4151,65 @@ static void test_free_data_slots(void)
     test_free_data_array4(test5);
 }
 
+static void test_first_fit_allocation(void)
+{
+    sh_status_e status;
+    long biggest_slot = 0;
+    long bigger_slot = 0;
+    view_s view;
+    shr_q_s *q = NULL;
+    status = shr_q_create(&q, "testq", 1, SQ_READWRITE);
+    assert(status == SH_OK);
+    view = alloc_data_slots(q, 64);
+    biggest_slot = view.slot;
+    assert(biggest_slot > 0);
+    view = alloc_data_slots(q, 32);
+    bigger_slot = view.slot;
+    assert(bigger_slot > 0);
+    status = free_data_slots(q, biggest_slot);
+    assert(status == SH_OK);
+    status = free_data_slots(q, bigger_slot);
+    assert(status == SH_OK);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == bigger_slot);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == biggest_slot);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+    status = shr_q_create(&q, "testq", 1, SQ_READWRITE);
+    assert(status == SH_OK);
+    view = alloc_data_slots(q, 64);
+    biggest_slot = view.slot;
+    assert(biggest_slot > 0);
+    view = alloc_data_slots(q, 32);
+    bigger_slot = view.slot;
+    assert(bigger_slot > 0);
+    view = alloc_data_slots(q, 16);
+    assert(view.slot != 0);
+    status = free_data_slots(q, view.slot);
+    assert(status == SH_OK);
+    status = free_data_slots(q, biggest_slot);
+    assert(status == SH_OK);
+    status = free_data_slots(q, bigger_slot);
+    assert(status == SH_OK);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == bigger_slot);
+    assert(view.extent->array[view.slot] == 32);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == biggest_slot);
+    assert(view.extent->array[view.slot] == 20);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == biggest_slot + 20);
+    assert(view.extent->array[view.slot] == 20);
+    view = alloc_data_slots(q, 20);
+    assert(view.slot == biggest_slot + 40);
+    assert(view.extent->array[view.slot] == 24);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
 static void test_large_data_allocation(void)
 {
     sh_status_e status;
@@ -4076,18 +4222,18 @@ static void test_large_data_allocation(void)
     view_s view = alloc_data_slots(q, 4096 >> SZ_SHIFT);
     big_slot = view.slot;
     assert(big_slot > 0);
-    status = free_data_slots(q, big_slot, 4096 >> SZ_SHIFT);
+    status = free_data_slots(q, big_slot);
     assert(status == SH_OK);
     view = alloc_data_slots(q, 8192 >> SZ_SHIFT);
     bigger_slot = view.slot;
     assert(bigger_slot > 0);
-    status = free_data_slots(q, bigger_slot, 8192 >> SZ_SHIFT);
+    status = free_data_slots(q, bigger_slot);
     assert(status == SH_OK);
     view = alloc_data_slots(q, 4096 >> SZ_SHIFT);
     slot = view.slot;
     assert(slot > 0);
     assert(big_slot == slot);
-    status = free_data_slots(q, big_slot, 4096 >> SZ_SHIFT);
+    status = free_data_slots(q, big_slot);
     assert(status == SH_OK);
     view = alloc_data_slots(q, 8192 >> SZ_SHIFT);
     slot = view.slot;
@@ -4966,6 +5112,7 @@ int main(void)
     test_listen();
     test_call();
     test_free_data_slots();
+    test_first_fit_allocation();
     test_large_data_allocation();
     test_add_errors();
     test_add_wait_errors();

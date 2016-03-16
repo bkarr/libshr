@@ -103,6 +103,8 @@ typedef enum
 {
     SQ_VECTOR_T = 0,        // vector of multiple types
     SQ_STRM_T,              // unspecified byte stream
+    SQ_INTEGER_T,           // integer data type determined by length
+    SQ_FLOAT_T,             // floating point type determined by length
     SQ_ASCII_T,             // ascii string (char values 0-127)
     SQ_UTF8_T,              // utf-8 string
     SQ_UTF16_T,             // utf-16 string
