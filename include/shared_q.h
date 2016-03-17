@@ -84,7 +84,7 @@ typedef enum
     SQ_EVNT_ALL = 0,        // not an event, used to simplify subscription
     SQ_EVNT_NONE = 0,       // non-event
     SQ_EVNT_INIT,           // first item added to queue
-    SQ_EVNT_DEPTH,          // max depth reached
+    SQ_EVNT_LIMIT,          // queue limit reached
     SQ_EVNT_TIME,           // max time limit reached
     SQ_EVNT_LEVEL,          // depth level reached
     SQ_EVNT_EMPTY,          // last item on queue removed
@@ -660,6 +660,35 @@ extern sh_status_e shr_q_discard(
     returns true if expired items will be discarded, otherwise false
 */
 extern bool shr_q_will_discard(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+/*
+    shr_q_limit_lifo  -- treat depth limit as limit for adaptive LIFO behav
+
+    Once depth limit is reached, items will be processed in LIFO rather
+    than FIFO ordering.  If depth limit is set to 0, or otherwise defaults to 0,
+    all items on queue will be processed in LIFO rather than FIFO order.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_limit_lifo(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    bool flag                   // true will turn on adaptive LIFO behavior
+);
+
+
+/*
+    shr_q_will_lifo -- tests to see if queue will used adaptive LIFO
+
+    returns true if queue will use adaptive LIFO, otherwise false
+*/
+extern bool shr_q_will_lifo(
     shr_q_s *q                  // pointer to queue struct -- not NULL
 );
 

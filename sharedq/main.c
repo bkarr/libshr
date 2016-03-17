@@ -948,8 +948,8 @@ void sharedq_monitor(int argc, char *argv[], int index)
             case SQ_EVNT_INIT :
                 printf("Event: initial add of item to queue\n");
                 break;
-            case SQ_EVNT_DEPTH :
-                printf("Event: max depth reached\n");
+            case SQ_EVNT_LIMIT :
+                printf("Event: queue limit reached\n");
                 break;
             case SQ_EVNT_LEVEL :
                 printf("Event: depth level reached\n");

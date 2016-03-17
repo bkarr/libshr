@@ -73,9 +73,9 @@ typedef atomic_long atomictype;
 // define functional flags
 #define FLAG_ACTIVATED 1
 #define FLAG_DISCARD_EXPIRED 2    // discard items that exceed timelimit
-#define FLAG_LIFO_ON_LEVEL 4
+#define FLAG_LIFO_ON_LEVEL 4      // enable adaptive LIFO based on depth level
 #define FLAG_EVNT_INIT 8          // disable event first item added to queue
-#define FLAG_EVNT_DEPTH 16        // disable event max depth reached
+#define FLAG_EVNT_LIMIT 16        // disable event max depth reached
 #define FLAG_EVNT_TIME 32         // disable event max time limit reached
 #define FLAG_EVNT_LEVEL 64        // disable event depth level reached
 #define FLAG_EVNT_EMPTY 128       // disable event last item on queue removed
@@ -780,10 +780,10 @@ static view_s insure_in_range(
 
 static long remove_front(
     shr_q_s *q,         // pointer to queue struct -- not NULL
-    long ref,        // expected slot number -- 0 if no interest
-    long gen,        // generation count
-    long head,       // head slot of list
-    long tail        // tail slot of list
+    long ref,           // expected slot number -- 0 if no interest
+    long gen,           // generation count
+    long head,          // head slot of list
+    long tail           // tail slot of list
 )   {
     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
     volatile long * volatile array = view.extent->array;
@@ -1680,6 +1680,13 @@ static inline bool is_discard_on_expire(
 }
 
 
+static inline bool is_adaptive_lifo(
+    long *array
+)   {
+    return (array[FLAGS] & FLAG_LIFO_ON_LEVEL);
+}
+
+
 static inline bool is_codel_active(
     long *array
 )   {
@@ -1693,12 +1700,12 @@ static long get_event_flag(
 )   {
     switch (event) {
     case SQ_EVNT_ALL:
-        return (FLAG_EVNT_INIT | FLAG_EVNT_DEPTH | FLAG_EVNT_EMPTY |
+        return (FLAG_EVNT_INIT | FLAG_EVNT_LIMIT | FLAG_EVNT_EMPTY |
             FLAG_EVNT_LEVEL | FLAG_EVNT_NONEMPTY | FLAG_EVNT_TIME);
     case SQ_EVNT_INIT:
         return FLAG_EVNT_INIT;
-    case SQ_EVNT_DEPTH:
-        return FLAG_EVNT_DEPTH;
+    case SQ_EVNT_LIMIT:
+        return FLAG_EVNT_LIMIT;
     case SQ_EVNT_EMPTY:
         return FLAG_EVNT_EMPTY;
     case SQ_EVNT_LEVEL:
@@ -1782,6 +1789,25 @@ static void update_empty_timestamp(
 }
 
 
+static void stack_push(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    long slot           // slot reference
+)   {
+    DWORD stack_before;
+    DWORD stack_after;
+    view_s view = insure_in_range(q, slot);
+    atomictype * volatile array = (atomictype*)view.extent->array;
+
+    do {
+        array[slot] = array[STACK_HEAD];
+        array[slot + 1] = array[STACK_HD_CNT];
+        stack_before = *((DWORD * volatile)&array[slot]);
+        stack_after.low = slot;
+        stack_after.high = stack_before.high + 1;
+    } while (!DWCAS((DWORD*)&array[STACK_HEAD], &stack_before, stack_after));
+}
+
+
 static sh_status_e enq_data(
     shr_q_s *q,         // pointer to queue, not NULL
     long data_slot      // data to be added to queue
@@ -1809,10 +1835,15 @@ static sh_status_e enq_data(
     // point queue node to data slot
     array[node + VALUE_OFFSET] = data_slot;
 
-    // append node to end of queue
-    add_end(q, node, TAIL);
+    long count = array[COUNT];
+    if (is_adaptive_lifo(array) && (count + 1 > array[LEVEL])) {
+        stack_push(q, node);
+    } else {
+        // append node to end of queue
+        add_end(q, node, TAIL);
+    }
 
-    long count = AFA(&array[COUNT], 1);
+    count = AFA(&array[COUNT], 1);
 
     if (is_monitored(array)) {
         if (count == 0) {
@@ -2019,6 +2050,78 @@ static void copy_to_buffer(
 }
 
 
+static long remove_top(
+    shr_q_s *q,         // pointer to queue struct -- not NULL
+    long top,           // expected slot number -- 0 if no interest
+    long gen            // generation count
+)   {
+    view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
+    volatile long * volatile array = view.extent->array;
+    DWORD before;
+    DWORD after;
+
+    if (top >= HDR_END && top == array[STACK_HEAD] &&
+        gen == array[STACK_HD_CNT]) {
+        view = insure_in_range(q, top);
+        array = view.extent->array;
+        after.low = array[top];
+        before.high = gen;
+        after.high = before.high + 1;
+        before.low = (ulong)top;
+        if (DWCAS((DWORD*)&array[STACK_HEAD], &before, after)) {
+            memset((void*)&array[top], 0, 2 << SZ_SHIFT);
+            return top;
+        }
+    }
+
+    return 0;
+}
+
+static long stack_pop(
+    shr_q_s *q          // pointer to queue
+)   {
+    long *array = q->current->array;
+    long gen = array[STACK_HD_CNT];
+    long top = array[STACK_HEAD];
+    view_s view = insure_in_range(q, top);
+    array = view.extent->array;
+    long data_slot = array[top + VALUE_OFFSET];
+    if (data_slot == 0) {
+        return data_slot;   // try again
+    }
+    if (remove_top(q, top, gen) == 0) {
+        return 0;
+    }
+    // free queue node
+    add_end(q, top, FREE_TAIL);
+    return data_slot;
+}
+
+
+static long queue_remove(
+    shr_q_s *q          // pointer to queue
+)   {
+    long *array = q->current->array;
+    long gen = array[HEAD_CNT];
+    long head = array[HEAD];
+    if (head == array[TAIL]) {
+        return 0;
+    }
+    view_s view = insure_in_range(q, head);
+    array = view.extent->array;
+    long data_slot = next_item(q, head);
+    if (data_slot == 0) {
+        return data_slot;   // try again
+    }
+    if (remove_front(q, head, gen, HEAD, TAIL) == 0) {
+        return 0;
+    }
+    // free queue node
+    add_end(q, head, FREE_TAIL);
+    return data_slot;
+}
+
+
 static sq_item_s deq(
     shr_q_s *q,         // pointer to queue
     void **buffer,      // address of buffer pointer, or NULL
@@ -2027,21 +2130,21 @@ static sq_item_s deq(
     view_s view = {.extent = q->current};
     long *array = view.extent->array;
     sq_item_s item = {.status = SH_ERR_EMPTY};
+    long data_slot;
 
     while (true) {
-        long gen = array[HEAD_CNT];
-        long head = array[HEAD];
-        if (head == array[TAIL]) {
-            break;
+        if (array[STACK_HEAD] != 0) {
+            data_slot = stack_pop(q);
+        } else {
+            long head = array[HEAD];
+            if (head == array[TAIL]) {
+                break;
+            }
+            data_slot = queue_remove(q);
         }
-        view = insure_in_range(q, head);
-        array = view.extent->array;
-        long data_slot = next_item(q, head);
-        if (data_slot == 0 || remove_front(q, head, gen, HEAD, TAIL) == 0) {
-            continue;   // try again
+        if (data_slot == 0) {
+            continue;
         }
-        // free queue node
-        add_end(q, head, FREE_TAIL);
         // insure data is accessible
         view = insure_in_range(q, data_slot);
         if (view.slot == 0) {
@@ -2623,7 +2726,7 @@ extern sh_status_e shr_q_add(
     long *array = q->current->array;
     while (sem_trywait((sem_t*)&array[WRITE_SEM]) < 0) {
         if (errno == EAGAIN) {
-            notify_event(q, SQ_EVNT_DEPTH);
+            notify_event(q, SQ_EVNT_LIMIT);
             (void)AFS(&q->accessors, 1);
             return SH_ERR_LIMIT;
         }
@@ -2690,7 +2793,7 @@ extern sh_status_e shr_q_add_wait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        notify_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_LIMIT);
     }
 
     while (sem_wait((sem_t*)&array[WRITE_SEM]) < 0) {
@@ -2759,7 +2862,7 @@ extern sh_status_e shr_q_add_timedwait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        notify_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_LIMIT);
     }
 
     struct timespec ts;
@@ -2831,7 +2934,7 @@ extern sh_status_e shr_q_addv(
     long *array = q->current->array;
     while (sem_trywait((sem_t*)&array[WRITE_SEM]) < 0) {
         if (errno == EAGAIN) {
-            notify_event(q, SQ_EVNT_DEPTH);
+            notify_event(q, SQ_EVNT_LIMIT);
             (void)AFS(&q->accessors, 1);
             return SH_ERR_LIMIT;
         }
@@ -2902,7 +3005,7 @@ extern sh_status_e shr_q_addv_wait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        notify_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_LIMIT);
     }
 
     while (sem_wait((sem_t*)&array[WRITE_SEM]) < 0) {
@@ -2977,7 +3080,7 @@ extern sh_status_e shr_q_addv_timedwait(
     int sval = 0;
     if (sem_getvalue((sem_t*)&array[WRITE_SEM], &sval) == 0 &&
         sval == 0) {
-        notify_event(q, SQ_EVNT_DEPTH);
+        notify_event(q, SQ_EVNT_LIMIT);
     }
 
     struct timespec ts;
@@ -3093,6 +3196,7 @@ extern sq_item_s shr_q_remove(
         item = deq(q, buffer, buff_size);
 
         if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            sem_post((sem_t*)&q->current->array[READ_SEM]);
             break;
         }
 
@@ -3176,6 +3280,7 @@ extern sq_item_s shr_q_remove_wait(
         item = deq(q, buffer, buff_size);
 
         if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            sem_post((sem_t*)&q->current->array[READ_SEM]);
             break;
         }
 
@@ -3271,6 +3376,7 @@ extern sq_item_s shr_q_remove_timedwait(
         item = deq(q, buffer, buff_size);
 
         if (item.status != SH_OK && item.status != SH_ERR_EXIST) {
+            sem_post((sem_t*)&q->current->array[READ_SEM]);
             break;
         }
 
@@ -3635,6 +3741,58 @@ extern bool shr_q_will_discard(
 
     (void)AFA(&q->accessors, 1);
     bool result = is_discard_on_expire(q->current->array);
+    (void)AFS(&q->accessors, 1);
+    return result;
+}
+
+
+/*
+    shr_q_limit_lifo  -- treat depth limit as limit for adaptive LIFO behav
+
+    Once depth limit is reached, items will be processed in LIFO rather
+    than FIFO ordering.  If depth limit is set to 0, or otherwise defaults to 0,
+    all items on queue will be processed in LIFO rather than FIFO order.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if q is NULL
+
+*/
+extern sh_status_e shr_q_limit_lifo(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    bool flag                   // true will turn on adaptive LIFO behavior
+)   {
+    if (q == NULL) {
+        return SH_ERR_ARG;
+    }
+
+    (void)AFA(&q->accessors, 1);
+
+    if (flag) {
+        set_flag(q->current->array, FLAG_LIFO_ON_LEVEL);
+    } else {
+        clear_flag(q->current->array, FLAG_LIFO_ON_LEVEL);
+    }
+    (void)AFS(&q->accessors, 1);
+    return SH_OK;
+}
+
+
+/*
+    shr_q_will_lifo -- tests to see if queue will used adaptive LIFO
+
+    returns true if queue will use adaptive LIFO, otherwise false
+*/
+extern bool shr_q_will_lifo(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return false;
+    }
+
+    (void)AFA(&q->accessors, 1);
+    bool result = is_adaptive_lifo(q->current->array);
     (void)AFS(&q->accessors, 1);
     return result;
 }
@@ -4713,7 +4871,7 @@ static void test_subscription(void)
     assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
-    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LIMIT));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
@@ -4722,7 +4880,7 @@ static void test_subscription(void)
     assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
     assert(shr_q_is_subscribed(q, SQ_EVNT_INIT));
-    assert(shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(shr_q_is_subscribed(q, SQ_EVNT_LIMIT));
     assert(shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
     assert(shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
     assert(shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
@@ -4731,7 +4889,7 @@ static void test_subscription(void)
     assert(!shr_q_is_subscribed(q, SQ_EVNT_ALL));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_NONE));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
-    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LIMIT));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_NONEMPTY));
     assert(!shr_q_is_subscribed(q, SQ_EVNT_LEVEL));
@@ -4740,10 +4898,10 @@ static void test_subscription(void)
     assert(shr_q_is_subscribed(q, SQ_EVNT_INIT));
     assert(shr_q_unsubscribe(q, SQ_EVNT_INIT) == SH_OK);
     assert(!shr_q_is_subscribed(q, SQ_EVNT_INIT));
-    assert(shr_q_subscribe(q, SQ_EVNT_DEPTH) == SH_OK);
-    assert(shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
-    assert(shr_q_unsubscribe(q, SQ_EVNT_DEPTH) == SH_OK);
-    assert(!shr_q_is_subscribed(q, SQ_EVNT_DEPTH));
+    assert(shr_q_subscribe(q, SQ_EVNT_LIMIT) == SH_OK);
+    assert(shr_q_is_subscribed(q, SQ_EVNT_LIMIT));
+    assert(shr_q_unsubscribe(q, SQ_EVNT_LIMIT) == SH_OK);
+    assert(!shr_q_is_subscribed(q, SQ_EVNT_LIMIT));
     assert(shr_q_subscribe(q, SQ_EVNT_EMPTY) == SH_OK);
     assert(shr_q_is_subscribed(q, SQ_EVNT_EMPTY));
     assert(shr_q_unsubscribe(q, SQ_EVNT_EMPTY) == SH_OK);
@@ -4817,7 +4975,7 @@ static void test_single_item_queue(void)
     assert(shr_q_event(q) == SQ_EVNT_INIT);
     assert(shr_q_event(q) == SQ_EVNT_NONEMPTY);
     assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
-    assert(shr_q_event(q) == SQ_EVNT_DEPTH);
+    assert(shr_q_event(q) == SQ_EVNT_LIMIT);
     assert(shr_q_count(q) == 1);
     item = shr_q_remove(q, &item.buffer, &item.buf_size);
     assert(item.status == SH_OK);
@@ -4870,7 +5028,7 @@ static void test_multi_item_queue(void)
     assert(shr_q_add(q, "test2", 5) == SH_OK);
     assert(shr_q_count(q) == 2);
     assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
-    assert(shr_q_event(q) == SQ_EVNT_DEPTH);
+    assert(shr_q_event(q) == SQ_EVNT_LIMIT);
     assert(shr_q_count(q) == 2);
     item = shr_q_remove(q, &item.buffer, &item.buf_size);
     assert(item.status == SH_OK);
@@ -5096,6 +5254,85 @@ static void test_vector_operations(void)
 }
 
 
+void test_adaptive_lifo()
+{
+    sh_status_e status;
+    shr_q_s *q = NULL;
+    sq_item_s item = {0};
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 0);
+    assert(!shr_q_will_lifo(q));
+    assert(shr_q_limit_lifo(q, true) == SH_OK);
+    assert(shr_q_will_lifo(q));
+    assert(shr_q_limit_lifo(q, false) == SH_OK);
+    assert(!shr_q_will_lifo(q));
+    assert(shr_q_limit_lifo(q, true) == SH_OK);
+    assert(shr_q_add(q, "test1", 5) == SH_OK);
+    assert(shr_q_add(q, "test2", 5) == SH_OK);
+    assert(shr_q_add(q, "test3", 5) == SH_OK);
+    assert(shr_q_count(q) == 3);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test3", item.length) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test2", item.length) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test1", item.length) == 0);
+    assert(shr_q_level(q, 2) == SH_OK);
+    assert(shr_q_count(q) == 0);
+    assert(shr_q_add(q, "test1", 5) == SH_OK);
+    assert(shr_q_add(q, "test2", 5) == SH_OK);
+    assert(shr_q_add(q, "test3", 5) == SH_OK);
+    assert(shr_q_add(q, "test4", 5) == SH_OK);
+    assert(shr_q_count(q) == 4);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test4", item.length) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test3", item.length) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test1", item.length) == 0);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test2", item.length) == 0);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+}
+
 int main(void)
 {
     set_signal_handlers();
@@ -5146,6 +5383,7 @@ int main(void)
     test_vector_operations();
     test_expiration_discard();
     test_codel_algorithm();
+    test_adaptive_lifo();
 
     return 0;
 }

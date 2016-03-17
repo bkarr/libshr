@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.14.1
+Version: 0.15.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -22,14 +22,14 @@ maximum
 - Separate process listener for arrivals on empty queue versus other monitoring
 events
 - Separate process listener for remove calls blocking on an empty queue
+- Blocked calls can use real time signal for demand calls to implement pull processing model
 - Event for very initial add, as well as, an add to empty queue
 - Event for queue removal producing an empty queue
 - Configurable performance related events for monitoring
 - Ability to clean items older than a specified time limit from front of queue
 - Can return time stamp for the last time the queue empty if not currently empty
 - Can be configured to discard items that have exceeded time limit
-- Blocked calls can use real time signal for demand calls to implement pull processing model
-- Implemented [CoDel](http://queue.acm.org/detail.cfm?id=2839461) algorithm for smoothing traffic spikes
+- Implemented [CoDel and adaptive LIFO](http://queue.acm.org/detail.cfm?id=2839461) algorithms for smoothing traffic spikes
 - Test name to verify that it is a valid queue
 - Vector operations to add and remove multiple items in a single call
 - Vectors can pass type information for respective data fields
@@ -88,7 +88,7 @@ Performance/stress test:
 ## Install
     ~/libshr $ sudo make install
 
-## Command line demo
+## Command line interface
 
     ~/libshr/sharedq $ ./sharedq help
     sharedq [modifiers] <cmd>
