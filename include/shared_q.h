@@ -568,6 +568,15 @@ extern long shr_q_count(
 
 
 /*
+    shr_q_buffer -- returns max size needed to read items from queue
+
+*/
+extern size_t shr_q_buffer(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+/*
     shr_q_level -- sets value for queue depth level event generation and for
         adaptive LIFO
 

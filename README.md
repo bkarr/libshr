@@ -7,7 +7,7 @@
 </a>
 -->
 
-Version: 0.15.0
+Version: 0.16.0
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.

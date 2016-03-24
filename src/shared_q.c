@@ -171,8 +171,9 @@ enum shr_q_disp
     STACK_HD_CNT,                   // head of stack counter
     FLAGS,                          // configuration flag values
     LEVEL,                          // queue depth event level
+    BUFFER,                         // max buffer size needed to read
     AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 12),         // end of queue header
+    HDR_END = (AVAIL + 11),         // end of queue header
 };
 
 
@@ -1499,6 +1500,21 @@ static inline long calc_data_slots(
     return space;
 }
 
+void update_buffer_size(
+    long *array,
+    long space,
+    long vcnt
+)   {
+    long total = space << SZ_SHIFT;
+    total += vcnt * sizeof(sq_vec_s);
+    long buff_sz = array[BUFFER];
+    while (total > buff_sz) {
+        if (CAS(&array[BUFFER], &buff_sz, total)) {
+            break;
+        }
+        buff_sz = array[BUFFER];
+    }
+}
 
 static long copy_value(
     shr_q_s *q,         // pointer to queue struct
@@ -1513,6 +1529,8 @@ static long copy_value(
     struct timespec curr_time;
     clock_gettime(CLOCK_REALTIME, &curr_time);
     long space = calc_data_slots(length);
+
+    update_buffer_size(q->current->array, space, 1);
 
     view_s view = alloc_data_slots(q, space);
     long current = view.slot;
@@ -1564,6 +1582,8 @@ static long copy_vector(
     struct timespec curr_time;
     clock_gettime(CLOCK_REALTIME, &curr_time);
     long space = calc_vector_slots(vector, vcnt);
+
+    update_buffer_size(q->current->array, space, vcnt);
 
     view_s view = alloc_data_slots(q, space);
     long current = view.slot;
@@ -3510,6 +3530,24 @@ extern long shr_q_count(
 
 
 /*
+    shr_q_buffer -- returns max size needed to read items from queue
+
+*/
+extern size_t shr_q_buffer(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+)   {
+    if (q == NULL) {
+        return 0;
+    }
+    (void)AFA(&q->accessors, 1);
+    long result = -1;
+    result = q->current->array[BUFFER];
+    (void)AFS(&q->accessors, 1);
+    return result;
+}
+
+
+/*
     shr_q_level -- sets value for queue depth level event generation and for
         adaptive LIFO
 
@@ -4564,6 +4602,7 @@ static void test_remove_errors(void)
     assert(status == SH_OK);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
+    free(item.buffer);
 }
 
 static void test_remove_wait_errors(void)
@@ -4596,6 +4635,7 @@ static void test_remove_wait_errors(void)
     assert(status == SH_OK);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
+    free(item.buffer);
 }
 
 static void test_remove_timedwait_errors(void)
@@ -4631,6 +4671,7 @@ static void test_remove_timedwait_errors(void)
     assert(status == SH_OK);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
+    free(item.buffer);
 }
 
 
@@ -4952,6 +4993,7 @@ static void test_empty_queue(void)
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
+    free(item.buffer);
 }
 
 
@@ -5111,6 +5153,7 @@ static void test_expiration_discard(void)
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
+    free(item.buffer);
 }
 
 
@@ -5167,6 +5210,7 @@ static void test_codel_algorithm(void)
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
+    free(item.buffer);
 }
 
 
@@ -5251,6 +5295,7 @@ static void test_vector_operations(void)
     assert(memcmp(item.vector[1].base, "test3", 5) == 0);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
+    free(item.buffer);
 }
 
 
@@ -5331,6 +5376,7 @@ void test_adaptive_lifo()
     assert(memcmp(item.value, "test2", item.length) == 0);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
+    free(item.buffer);
 }
 
 int main(void)
