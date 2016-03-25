@@ -3785,7 +3785,7 @@ extern bool shr_q_will_discard(
 
 
 /*
-    shr_q_limit_lifo  -- treat depth limit as limit for adaptive LIFO behav
+    shr_q_limit_lifo  -- treat depth limit as limit for adaptive LIFO behavior
 
     Once depth limit is reached, items will be processed in LIFO rather
     than FIFO ordering.  If depth limit is set to 0, or otherwise defaults to 0,
