@@ -1520,7 +1520,7 @@ static long copy_value(
     shr_q_s *q,         // pointer to queue struct
     void *value,        // pointer to value data
     long length,        // length of data
-    sq_type_e type      // data type
+    sh_type_e type      // data type
 )   {
     if (q == NULL || value == NULL || length <= 0) {
         return 0;
@@ -1592,7 +1592,7 @@ static long copy_vector(
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
-        array[current + TYPE] = SQ_VECTOR_T;
+        array[current + TYPE] = SH_VECTOR_T;
         array[current + VEC_CNT] = vcnt;
         array[current + DATA_LENGTH] = (space - DATA_HDR) << SZ_SHIFT;
         long slot = current;
@@ -1899,7 +1899,7 @@ static sh_status_e enq(
     shr_q_s *q,         // pointer to queue, not NULL
     void *value,        // pointer to item, not NULL
     size_t length,      // length of item
-    sq_type_e type      // data type
+    sh_type_e type      // data type
 )   {
     if (q == NULL || value == NULL || length <= 0) {
         return SH_ERR_ARG;
@@ -2052,19 +2052,25 @@ static void copy_to_buffer(
     item->vcount = array[data_slot + VEC_CNT];
     item->vector = (sq_vec_s*)((uint8_t*)*buffer + size);
     if (item->vcount == 1) {
-        item->vector[0].type = (sq_type_e)array[data_slot + TYPE];
+        item->vector[0].type = (sh_type_e)array[data_slot + TYPE];
         item->vector[0].len = item->length;
         item->vector[0].base = item->value;
     } else {
         uint8_t *current = (uint8_t*)item->value;
         for (int i = 0; i < item->vcount; i++) {
-            item->vector[i].type = (sq_type_e)*(long*)current;
+            item->vector[i].type = (sh_type_e)*(long*)current;
             current += sizeof(long);
             item->vector[i].len = *(long*)current;
             current += sizeof(long);
             item->vector[i].base = current;
-            current += item->vector[i].len;
-            current += sizeof(long) - (item->vector[i].len & REM);
+            if (item->vector[i].len <= sizeof(long)) {
+                current += sizeof(long);
+            } else {
+                current += (item->vector[i].len >> SZ_SHIFT) << SZ_SHIFT;
+                if (item->vector[i].len & REM) {
+                    current += sizeof(long);
+                }
+            }
         }
     }
 }
@@ -2756,7 +2762,7 @@ extern sh_status_e shr_q_add(
         }
     }
 
-    sh_status_e status = enq(q, value, length, SQ_STRM_T);
+    sh_status_e status = enq(q, value, length, SH_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -2823,7 +2829,7 @@ extern sh_status_e shr_q_add_wait(
         }
     }
 
-    sh_status_e status = enq(q, value, length, SQ_STRM_T);
+    sh_status_e status = enq(q, value, length, SH_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -2899,7 +2905,7 @@ extern sh_status_e shr_q_add_timedwait(
         }
     }
 
-    sh_status_e status = enq(q, value, length, SQ_STRM_T);
+    sh_status_e status = enq(q, value, length, SH_STRM_T);
 
     if (status != SH_OK) {
         sem_post((sem_t*)&array[WRITE_SEM]);
@@ -5222,8 +5228,8 @@ static void test_vector_operations(void)
     struct timespec ts = {0};
     sq_vec_s vector[2] = {{0}, {0}};
 
-    vector[0].type = SQ_ASCII_T;
-    vector[1].type = SQ_ASCII_T;
+    vector[0].type = SH_ASCII_T;
+    vector[1].type = SH_ASCII_T;
     shm_unlink("testq");
     status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
     assert(status == SH_OK);
@@ -5240,7 +5246,7 @@ static void test_vector_operations(void)
     assert(memcmp(item.value, "token", 5) == 0);
     assert(item.vector != NULL);
     assert(item.vcount == 1);
-    assert(item.vector[0].type == SQ_ASCII_T);
+    assert(item.vector[0].type == SH_ASCII_T);
     assert(item.vector[0].len == 5);
     assert(memcmp(item.vector[0].base, "token", 5) == 0);
     vector[1].base = "test1";
@@ -5287,10 +5293,10 @@ static void test_vector_operations(void)
     assert(item.value != NULL);
     assert(item.vector != NULL);
     assert(item.vcount == 2);
-    assert(item.vector[0].type == SQ_ASCII_T);
+    assert(item.vector[0].type == SH_ASCII_T);
     assert(item.vector[0].len == 5);
     assert(memcmp(item.vector[0].base, "token", 5) == 0);
-    assert(item.vector[0].type == SQ_ASCII_T);
+    assert(item.vector[0].type == SH_ASCII_T);
     assert(item.vector[1].len == 5);
     assert(memcmp(item.vector[1].base, "test3", 5) == 0);
     status = shr_q_destroy(&q);

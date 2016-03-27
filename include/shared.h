@@ -42,4 +42,20 @@ typedef enum
     SH_ERR_SYS              // system error
 } sh_status_e;
 
+
+typedef enum
+{
+    SH_VECTOR_T = 0,        // vector of multiple types
+    SH_STRM_T,              // unspecified byte stream
+    SH_INTEGER_T,           // integer data type determined by length
+    SH_FLOAT_T,             // floating point type determined by length
+    SH_ASCII_T,             // ascii string (char values 0-127)
+    SH_UTF8_T,              // utf-8 string
+    SH_UTF16_T,             // utf-16 string
+    SH_JSON_T,              // json string
+    SH_XML_T,               // xml string
+    SH_STRUCT_T,            // binary struct
+} sh_type_e;
+
+
 #endif // SHARED_H_
