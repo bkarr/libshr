@@ -597,7 +597,7 @@ void queue_from_stdin(
     shr_q_s *q
 )   {
     char *line = NULL;
-    puts("<--");
+    fputs("<--", stdout);
     while((line = readline(stdin, line)) != NULL) {
         if (strlen(line) == 0) {
             free(line);
@@ -619,7 +619,7 @@ void queue_from_stdin(
             free(line);
             return;
         }
-        puts("<--");
+        fputs("<--", stdout);
     }
 }
 
@@ -1325,7 +1325,7 @@ void pull_from_stdin(
             printf("sharedq:  read error on signal fd\n");
             return;
         }
-        puts("<--");
+        fputs("<--", stdout);
         line = readline(stdin, line);
         if (line == NULL) {
             break;
