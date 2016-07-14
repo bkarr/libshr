@@ -280,7 +280,7 @@ static char *status_str[] = {
 static void *null = NULL;
 
 static sh_status_e free_data_gap(shr_q_s *q, long slot, long count);
-static view_s insure_in_range(shr_q_s *q, long slot);
+static view_s insure_in_range(shr_q_s *q, long start, long slots);
 
 /*==============================================================================
 
@@ -598,7 +598,7 @@ static void add_end(
         next = tail_before.low;
         array[slot + 1] = tail_before.high + 1;
         next_after.high = tail_before.high + 1;
-        view = insure_in_range(q, next);
+        view = insure_in_range(q, next, 0);
         array = (atomictype * volatile)view.extent->array;
         if (tail_before.low == array[next]) {
             if (DWCAS((DWORD*)&array[next], &tail_before, next_after)) {
@@ -765,16 +765,17 @@ static view_s expand(
 
 static view_s insure_in_range(
     shr_q_s *q,         // pointer to queue struct
-    long slot
+    long start,         // starting slot
+    long slots          // slot count
 )   {
     view_s view = {.status = SH_OK, .slot = 0, .extent = q->current};
-    if (slot < HDR_END) {
+    if (start < HDR_END) {
         return view;
     }
-    if (slot >= view.extent->slots) {
+    if (start + slots >= view.extent->slots) {
         view = resize_extent(q, view.extent);
     }
-    view.slot = slot;
+    view.slot = start;
     return view;
 }
 
@@ -792,7 +793,7 @@ static long remove_front(
     DWORD after;
 
     if (ref >= HDR_END && ref != array[tail]) {
-        view = insure_in_range(q, ref);
+        view = insure_in_range(q, ref, 0);
         array = view.extent->array;
         after.low = array[ref];
         before.high = gen;
@@ -826,7 +827,7 @@ static view_s alloc_node_slots(
         node_alloc = array[FREE_HEAD];
         while (node_alloc != array[FREE_TAIL]) {
             node_alloc = remove_front(q, node_alloc, gen, FREE_HEAD, FREE_TAIL);
-            view = insure_in_range(q, node_alloc);
+            view = insure_in_range(q, node_alloc, NODE_SIZE);
             array = view.extent->array;
             if (view.slot != 0) {
                 memset(&array[node_alloc], 0, slots << SZ_SHIFT);
@@ -840,7 +841,7 @@ static view_s alloc_node_slots(
         node_alloc = array[NODE_ALLOC];
         data_alloc = array[DATA_ALLOC];
         alloc_end = node_alloc + slots;
-        view = insure_in_range(q, node_alloc);
+        view = insure_in_range(q, node_alloc, NODE_SIZE);
         array = view.extent->array;
         if (alloc_end < data_alloc) {
             before.low = node_alloc;
@@ -879,7 +880,7 @@ static long find_leaf(
 
     while (ref->flag < 0) {
         node_slot = ref->next;
-        view = insure_in_range(q, node_slot);
+        view = insure_in_range(q, node_slot, 0);
         if (view.slot == 0) {
             return 0;
         }
@@ -888,7 +889,7 @@ static long find_leaf(
         long direction = (1 + (ref->bits | key[ref->byte])) >> 8;
         ref = &node->child[direction];
     }
-    view = insure_in_range(q, ref->next);
+    view = insure_in_range(q, ref->next, 0);
     if (view.slot == 0) {
         return 0;
     }
@@ -909,14 +910,14 @@ static long walk_tree(
 
     while (top > 0 && (retries--)) {
         long ref_index = stack[--top];
-        view = insure_in_range(q, ref_index);
+        view = insure_in_range(q, ref_index, 0);
         if (view.slot != ref_index) {
             return 0;
         }
         array = view.extent->array;
         idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
         if (ref->flag >= 0) {
-            view = insure_in_range(q, ref->next);
+            view = insure_in_range(q, ref->next, 0);
             if (view.slot != ref->next) {
                 return 0;
             }
@@ -927,7 +928,7 @@ static long walk_tree(
             }
             continue;
         }
-        view = insure_in_range(q, ref->next);
+        view = insure_in_range(q, ref->next, 0);
         if (view.slot != ref->next) {
             return 0;
         }
@@ -966,7 +967,7 @@ static long find_first_fit(
 
     while (ref->flag < 0) {
         node_slot = ref->next;
-        view = insure_in_range(q, node_slot);
+        view = insure_in_range(q, node_slot, 0);
         if (view.slot == 0) {
             return 0;
         }
@@ -984,7 +985,7 @@ static long find_first_fit(
             }
         }
     }
-    view = insure_in_range(q, ref->next);
+    view = insure_in_range(q, ref->next, 0);
     if (view.slot == 0) {
         return 0;
     }
@@ -1038,7 +1039,7 @@ static sh_status_e add_to_leaf(
     idx_leaf_s *leaf,
     long slot
 )   {
-    view_s view = insure_in_range(q, slot);
+    view_s view = insure_in_range(q, slot, 0);
     if (view.slot == 0) {
         return SH_ERR_NOMEM;
     }
@@ -1086,7 +1087,7 @@ static sh_status_e insert_idx_gap(
     if (index == 0) {
         return SH_ERR_NOMEM;
     }
-    view_s view = insure_in_range(q, index);
+    view_s view = insure_in_range(q, index, 0);
     if (view.slot == 0) {
         return SH_ERR_NOMEM;
     }
@@ -1136,7 +1137,7 @@ static sh_status_e insert_idx_gap(
     ref->next = leaf_index;
 
     // find place to insert new node in tree
-    view = insure_in_range(q, ref_index);
+    view = insure_in_range(q, ref_index, 0);
     array = view.extent->array;
     idx_ref_s *parent = (idx_ref_s*)&array[ref_index];
     while (true) {
@@ -1150,7 +1151,7 @@ static sh_status_e insert_idx_gap(
             break;
         }
         long direction = ((1 + (parent->bits | key[parent->byte])) >> 8);
-        view = insure_in_range(q, parent->next);
+        view = insure_in_range(q, parent->next, 0);
         array = view.extent->array;
         node = (idx_node_s*)&array[parent->next];
         parent = &node->child[direction];
@@ -1296,7 +1297,7 @@ static sh_status_e insert_idx_node(
     ref->next = leaf_index;
 
     // find place to insert new node in tree
-    view = insure_in_range(q, ref_index);
+    view = insure_in_range(q, ref_index, 0);
     array = view.extent->array;
     idx_ref_s *parent = (idx_ref_s*)&array[ref_index];
     while (true) {
@@ -1310,7 +1311,7 @@ static sh_status_e insert_idx_node(
             break;
         }
         long direction = ((1 + (parent->bits | key[parent->byte])) >> 8);
-        view = insure_in_range(q, parent->next);
+        view = insure_in_range(q, parent->next, 0);
         array = view.extent->array;
         idx_node_s *pnode = (idx_node_s*)&array[parent->next];
         parent = &pnode->child[direction];
@@ -1405,7 +1406,7 @@ static long lookup_freed_data(
     if (index == 0) {
         return 0;
     }
-    view_s view = insure_in_range(q, index);
+    view_s view = insure_in_range(q, index, 0);
     long *array = view.extent->array;
     idx_leaf_s *leaf = (idx_leaf_s*)&array[index];
     if (slots > leaf->count) {
@@ -1417,7 +1418,7 @@ static long lookup_freed_data(
     do {
         before.low = leaf->allocs;
         before.high = leaf->allocs_count;
-        view = insure_in_range(q, before.low);
+        view = insure_in_range(q, before.low, 0);
         array = view.extent->array;
         after.low = (volatile long)array[before.low];
         after.high = before.high + 1;
@@ -1448,7 +1449,7 @@ static view_s alloc_data_slots(
     while (true) {
         if (array[ROOT_FREE] != 0) {
             alloc_start = lookup_freed_data(q, slots);
-            view = insure_in_range(q, alloc_start);
+            view = insure_in_range(q, alloc_start, slots);
             array = view.extent->array;
             if (view.slot != 0) {
                 memset(&array[alloc_start + 1], 0, (slots - 1) << SZ_SHIFT);
@@ -1460,7 +1461,7 @@ static view_s alloc_data_slots(
         data_alloc = array[DATA_ALLOC];
         node_alloc = array[NODE_ALLOC];
         alloc_start = data_alloc - slots;
-        view = insure_in_range(q, alloc_start);
+        view = insure_in_range(q, alloc_start, slots);
         array = view.extent->array;
         if (view.slot == alloc_start && alloc_start > node_alloc) {
             before.low = node_alloc;
@@ -1534,7 +1535,7 @@ static long copy_value(
 
     view_s view = alloc_data_slots(q, space);
     long current = view.slot;
-    if (current) {
+    if (current >= HDR_END) {
         long *array = view.extent->array;
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
@@ -1587,7 +1588,7 @@ static long copy_vector(
 
     view_s view = alloc_data_slots(q, space);
     long current = view.slot;
-    if (current) {
+    if (current >= HDR_END) {
         long *array = view.extent->array;
         array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
@@ -1815,7 +1816,7 @@ static void stack_push(
 )   {
     DWORD stack_before;
     DWORD stack_after;
-    view_s view = insure_in_range(q, slot);
+    view_s view = insure_in_range(q, slot, 0);
     atomictype * volatile array = (atomictype*)view.extent->array;
 
     do {
@@ -1911,6 +1912,9 @@ static sh_status_e enq(
     if (data_slot == 0) {
         return SH_ERR_NOMEM;
     }
+    if (data_slot < HDR_END) {
+        return SH_ERR_STATE;
+    }
     return enq_data(q, data_slot);
 }
 
@@ -1933,6 +1937,9 @@ static sh_status_e enqv(
     if (data_slot == 0) {
         return SH_ERR_NOMEM;
     }
+    if (data_slot < HDR_END) {
+        return SH_ERR_STATE;
+    }
     return enq_data(q, data_slot);
 }
 
@@ -1941,13 +1948,13 @@ static long next_item(
     shr_q_s *q,          // pointer to queue
     long slot
 )   {
-    view_s view = insure_in_range(q, slot);
+    view_s view = insure_in_range(q, slot, 0);
     if (view.slot == 0) {
         return 0;
     }
     long *array = view.extent->array;
     long next = array[slot];
-    view = insure_in_range(q, next);
+    view = insure_in_range(q, next, 0);
     if (view.slot == 0) {
         return 0;
     }
@@ -1971,7 +1978,7 @@ static bool item_exceeds_limit(
     if (timelimit->tv_sec == 0 && timelimit->tv_nsec == 0) {
         return false;
     }
-    view_s view = insure_in_range(q, item_slot);
+    view_s view = insure_in_range(q, item_slot, 0);
     long *array = view.extent->array;
     struct timespec diff = {0, 0};
     struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
@@ -2088,7 +2095,7 @@ static long remove_top(
 
     if (top >= HDR_END && top == array[STACK_HEAD] &&
         gen == array[STACK_HD_CNT]) {
-        view = insure_in_range(q, top);
+        view = insure_in_range(q, top, 0);
         array = view.extent->array;
         after.low = array[top];
         before.high = gen;
@@ -2109,7 +2116,7 @@ static long stack_pop(
     long *array = q->current->array;
     long gen = array[STACK_HD_CNT];
     long top = array[STACK_HEAD];
-    view_s view = insure_in_range(q, top);
+    view_s view = insure_in_range(q, top, 0);
     array = view.extent->array;
     long data_slot = array[top + VALUE_OFFSET];
     if (data_slot == 0) {
@@ -2133,7 +2140,7 @@ static long queue_remove(
     if (head == array[TAIL]) {
         return 0;
     }
-    view_s view = insure_in_range(q, head);
+    view_s view = insure_in_range(q, head, 0);
     array = view.extent->array;
     long data_slot = next_item(q, head);
     if (data_slot == 0) {
@@ -2172,13 +2179,13 @@ static sq_item_s deq(
             continue;
         }
         // insure data is accessible
-        view = insure_in_range(q, data_slot);
+        view = insure_in_range(q, data_slot, 0);
         if (view.slot == 0) {
             break;
         }
         array = view.extent->array;
         long end_slot = data_slot + array[data_slot + DATA_SLOTS] - 1;
-        view = insure_in_range(q, end_slot);
+        view = insure_in_range(q, end_slot, 0);
         if (view.slot == 0) {
             break;
         }
@@ -2229,14 +2236,14 @@ static sq_event_e next_event(
     shr_q_s *q,          // pointer to queue
     long slot
 )   {
-    view_s view = insure_in_range(q, slot);
+    view_s view = insure_in_range(q, slot, 0);
     if (view.slot == 0) {
         return SQ_EVNT_NONE;
     }
     long *array = view.extent->array;
 
     long next = array[slot];
-    view = insure_in_range(q, next);
+    view = insure_in_range(q, next, 0);
     if (view.slot == 0) {
         return SQ_EVNT_NONE;
     }
@@ -3662,14 +3669,14 @@ extern sh_status_e shr_q_clean(
         if (head == array[TAIL]) {
             break;
         }
-        view_s view = insure_in_range(q, head);
+        view_s view = insure_in_range(q, head, 0);
         array = view.extent->array;
         long data_slot = next_item(q, head);
         if (data_slot == 0) {
             break;
         }
         // insure data is accessible
-        view = insure_in_range(q, data_slot);
+        view = insure_in_range(q, data_slot, 0);
         if (view.slot == 0) {
             break;
         }
