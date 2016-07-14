@@ -4,15 +4,15 @@ SHELL = /bin/sh
 
 CC = gcc
 EXE = shrq_harness
-LIB = -L../lib -lshr -lrt -lpthread
+LIB = -L../lib -l:libshr.a -lrt -lpthread
 
 all: all64
 
 #all64: CFLAGS = -I../include -DMTHRD -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
-all64: CFLAGS = -I../include -static -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all64: CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
 all64: main
 
-all32: CFLAGS = -m32 -I../include -static -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+all32: CFLAGS = -m32 -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
 all32: main
 
 
