@@ -185,9 +185,9 @@ typedef struct idx_ref
     long next;
     union {
         struct {
+            halfword byte;
             int8_t  flag;
             uint8_t bits;
-            halfword byte;
         };
         ulong diff;
     };
@@ -1496,6 +1496,13 @@ static inline long calc_data_slots(
     // account for remainder
     if (length & REM) {
         space++;
+    }
+
+    if (__builtin_popcountl(space) > 1) {
+        int bit_len = sizeof(space) * 8;
+        int pos = __builtin_clzl(space);
+        int shifts = bit_len - pos;
+        space = 1 << shifts;
     }
 
     return space;
