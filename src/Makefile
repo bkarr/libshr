@@ -9,10 +9,10 @@ LIB = -lrt -lpthread
 
 all: all64
 
-all64: CFLAGS = -mcx16 -I../include -c -g3 -O1 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
+all64: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
 all64: shared_q
 
-all32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O1 -fPIC -std=gnu99 -Wall -o "$@".o
+all32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O0 -fPIC -std=gnu99 -Wall -o "$@".o
 all32: shared_q
 
 debug: debug64

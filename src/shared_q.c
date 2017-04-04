@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015-2016 Bryan Karr
+Copyright (c) 2015-2017 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -142,8 +142,8 @@ enum shr_q_disp
     TS_NSEC,                        // timestamp of last add in nanoseconds
     LISTEN_PID,                     // arrival notification process id
     LISTEN_SIGNAL,                  // arrival notification signal
-    NODE_ALLOC,                     // next available node allocation slot
     DATA_ALLOC,                     // next available data allocation slot
+    SPARE,                          // spare slot
     EVENT_HEAD,                     // event queue head
     EVENT_HD_CNT,                   // event queue head counter
     ROOT_FREE,                      // root of free data index
@@ -279,7 +279,6 @@ static char *status_str[] = {
 
 static void *null = NULL;
 
-static sh_status_e free_data_gap(shr_q_s *q, long slot, long count);
 static view_s insure_in_range(shr_q_s *q, long start, long slots);
 
 /*==============================================================================
@@ -409,7 +408,7 @@ static inline bool set_flag(
 
 
 
-static bool clear_flag(
+static inline bool clear_flag(
     long *array,
     long indicator
 )   {
@@ -498,8 +497,7 @@ static sh_status_e init_array(
         return SH_ERR_NOSUPPORT;
     }
 
-    array[NODE_ALLOC] = HDR_END + (3 * NODE_SIZE);
-    array[DATA_ALLOC] = array[SIZE];
+    array[DATA_ALLOC] = HDR_END + (3 * NODE_SIZE);
     array[FREE_HEAD] = HDR_END;
     array[FREE_HD_CNT] = (long)DELTA * 2;
     array[FREE_TAIL] = HDR_END;
@@ -619,12 +617,7 @@ static long calculate_realloc_size(
 )   {
     long current_pages = extent->size >> 12; // divide by page size
     long needed_pages = ((slots << SZ_SHIFT) >> 12) + 1;
-    long exp_pages = (extent->size >> (SZ_SHIFT - 1)) >> 12;
-
-    if (needed_pages > exp_pages) {
-        return (current_pages + needed_pages) * PAGE_SIZE;
-    }
-    return (current_pages + exp_pages) * PAGE_SIZE;
+    return (current_pages + needed_pages) * PAGE_SIZE;
 }
 
 /*
@@ -640,7 +633,7 @@ static view_s resize_extent(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     extent_s *extent    // pointer to working extent -- not NULL
 )   {
-    view_s view = {.status = SH_OK, .extent = q->current};
+    view_s view = {.status = SH_OK, .slot =  0, .extent = q->current};
     // did another thread change current extent?
     if (extent != view.extent) {
         return view;
@@ -694,8 +687,6 @@ static view_s expand(
     view_s view = {.status = SH_OK, .extent = extent};
     atomictype *array = (atomictype*)extent->array;
     long size = calculate_realloc_size(extent, slots);
-    DWORD before;
-    DWORD after;
 
     if (extent != q->current) {
         view.extent = q->current;
@@ -729,22 +720,6 @@ static view_s expand(
 
         if (view.status == SH_OK) {
             array[SIZE] = size >> SZ_SHIFT;
-
-            // update allocation values
-            after.high = array[SIZE];
-            do {
-                before.low = (volatile long)array[NODE_ALLOC];
-                before.high = (volatile long)array[DATA_ALLOC];
-                if (before.high == extent->slots) {
-                    after.low = before.low;
-                } else {
-                    after.low = extent->slots;
-                }
-            } while (!DWCAS((DWORD*)&array[NODE_ALLOC], &before, after));
-
-            if (before.low != after.low && before.high - before.low >= 2) {
-                free_data_gap(q, before.low, before.high - before.low);
-            }
         }
     }
 
@@ -763,7 +738,7 @@ static view_s expand(
 }
 
 
-static view_s insure_in_range(
+static inline view_s insure_in_range(
     shr_q_s *q,         // pointer to queue struct
     long start,         // starting slot
     long slots          // slot count
@@ -774,6 +749,12 @@ static view_s insure_in_range(
     }
     if (start + slots >= view.extent->slots) {
         view = resize_extent(q, view.extent);
+        if (start + slots >= view.extent->slots) {
+            view = expand(q, view.extent, slots);
+            if (view.status != SH_OK) {
+                return view;
+            }
+        }
     }
     view.slot = start;
     return view;
@@ -814,11 +795,8 @@ static view_s alloc_node_slots(
 )   {
     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
     long *array = view.extent->array;
-    DWORD before;
-    DWORD after;
     long slots = NODE_SIZE;
     long node_alloc;
-    long data_alloc;
     long alloc_end;
 
     while (true) {
@@ -827,28 +805,25 @@ static view_s alloc_node_slots(
         node_alloc = array[FREE_HEAD];
         while (node_alloc != array[FREE_TAIL]) {
             node_alloc = remove_front(q, node_alloc, gen, FREE_HEAD, FREE_TAIL);
-            view = insure_in_range(q, node_alloc, NODE_SIZE);
-            array = view.extent->array;
-            if (view.slot != 0) {
-                memset(&array[node_alloc], 0, slots << SZ_SHIFT);
-                return view;
+            if (node_alloc > 0) {
+                view = insure_in_range(q, node_alloc, NODE_SIZE);
+                array = view.extent->array;
+                if (view.slot != 0) {
+                    memset(&array[node_alloc], 0, slots << SZ_SHIFT);
+                    return view;
+                }
             }
             gen = array[FREE_HD_CNT];
             node_alloc = array[FREE_HEAD];
         }
 
         // attempt to allocate new node from current extent
-        node_alloc = array[NODE_ALLOC];
-        data_alloc = array[DATA_ALLOC];
+        node_alloc = array[DATA_ALLOC];
         alloc_end = node_alloc + slots;
         view = insure_in_range(q, node_alloc, NODE_SIZE);
         array = view.extent->array;
-        if (alloc_end < data_alloc) {
-            before.low = node_alloc;
-            before.high = data_alloc;
-            after.low = alloc_end;
-            after.high = data_alloc;
-            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, after)) {
+        if (alloc_end < array[SIZE]) {
+            if (CAS(&array[DATA_ALLOC], &node_alloc, alloc_end)) {
                 memset(array+node_alloc, 0, slots << SZ_SHIFT);
                 view.slot = node_alloc;
                 return view;
@@ -856,11 +831,6 @@ static view_s alloc_node_slots(
             view.extent = q->current;
             array = view.extent->array;
             continue;
-        }
-
-        view = expand(q, view.extent, slots);
-        if (view.status != SH_OK) {
-            return view;
         }
     }
     return view;
@@ -998,42 +968,6 @@ static long find_first_fit(
 }
 
 
-static sh_status_e add_idx_gap(
-    shr_q_s *q,         // pointer to queue struct
-    long slot,          // start of slot range
-    long count,         // number of slots to return
-    long ref_index
-)   {
-    if (count < NODE_SIZE + 2) {
-        if (count >= NODE_SIZE) {
-            add_end(q, slot, FREE_TAIL);
-        }
-        return SH_OK;
-    }
-    long node = slot;
-    slot += NODE_SIZE;
-    count -= NODE_SIZE;
-
-    extent_s *extent = q->current;
-    long *array = extent->array;
-    idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
-    idx_leaf_s *leaf = (idx_leaf_s*)&array[node];
-    leaf->count = count;
-    leaf->allocs = slot;
-    leaf->allocs_count = 1;
-    array[slot] = 0;
-    array[slot + 1] = 0;
-    DWORD before = {0, 0};
-    DWORD after = { .low = node, .high = 0};
-
-    if (!DWCAS((DWORD*)ref, &before, after)) {
-        add_end(q, node, FREE_TAIL);
-        return SH_RETRY;
-    }
-    return SH_OK;
-}
-
-
 static sh_status_e add_to_leaf(
     shr_q_s *q,         // pointer to queue struct
     idx_leaf_s *leaf,
@@ -1059,171 +993,6 @@ static sh_status_e add_to_leaf(
     } while (!DWCAS((DWORD*)&leaf->allocs, &before, after));
 
     return SH_OK;
-}
-
-
-static sh_status_e insert_idx_gap(
-    shr_q_s *q,         // pointer to queue struct
-    long slot,          // start of slot range
-    long count,         // number of slots to return
-    long ref_index
-)   {
-    if (count < (2 * NODE_SIZE) + 2) {
-        // abandon gap as too small to track
-        return SH_OK;
-    }
-
-    // create new leaf
-    long leaf_index = slot;
-    slot += NODE_SIZE;
-    count -= NODE_SIZE;
-
-    // create new internal node
-    long node_index = slot;
-    slot += NODE_SIZE;
-    count -= NODE_SIZE;
-
-    long index = find_leaf(q, count, ROOT_FREE);
-    if (index == 0) {
-        return SH_ERR_NOMEM;
-    }
-    view_s view = insure_in_range(q, index, 0);
-    if (view.slot == 0) {
-        return SH_ERR_NOMEM;
-    }
-    idx_leaf_s *leaf = (idx_leaf_s*)&view.extent->array[index];
-
-    // evaluate differences in keys
-    long byte = 0;
-    uint8_t bits = 0;
-    uint8_t *key = (uint8_t*)&count;
-
-    /*
-        different orderings needed for endianness
-    */
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    for (byte = 0; byte < sizeof(long) ; byte++) {
-#else
-    for (byte = sizeof(long) - 1; byte >= 0 ; byte--) {
-#endif
-        bits = key[byte]^leaf->key[byte];
-        if (bits) {
-            break;
-        }
-    }
-    if (bits == 0) {
-        // keys are equal
-        add_end(q, leaf_index, FREE_TAIL);
-        add_end(q, node_index, FREE_TAIL);
-        return add_to_leaf(q, leaf, slot);
-    }
-
-    // calculate bit difference
-    bits = (uint8_t)~(1 << (31 - __builtin_clz(bits)));
-    long newdirection = (1 + (bits | key[byte])) >> 8;
-
-    //initialize new leaf
-    long *array = view.extent->array;
-    array[slot] = 0;
-    array[slot + 1] = 0;
-    leaf = (idx_leaf_s*)&array[leaf_index];
-    leaf->count = count;
-    leaf->allocs = slot;
-    leaf->allocs_count = 1;
-
-    // initialize new internal node
-    idx_node_s *node = (idx_node_s*)&array[node_index];
-    idx_ref_s *ref = &node->child[newdirection];
-    ref->next = leaf_index;
-
-    // find place to insert new node in tree
-    view = insure_in_range(q, ref_index, 0);
-    array = view.extent->array;
-    idx_ref_s *parent = (idx_ref_s*)&array[ref_index];
-    while (true) {
-        if (parent->flag >= 0) {
-            break;
-        }
-        if (parent->byte < byte) {
-            break;
-        }
-        if (parent->byte == byte && parent->bits > bits) {
-            break;
-        }
-        long direction = ((1 + (parent->bits | key[parent->byte])) >> 8);
-        view = insure_in_range(q, parent->next, 0);
-        array = view.extent->array;
-        node = (idx_node_s*)&array[parent->next];
-        parent = &node->child[direction];
-    }
-
-    // insert new node in tree
-    DWORD before = {0};
-    DWORD after = {0};
-    ref = &node->child[1 - newdirection];
-    ref->next = parent->next;
-    ref->diff = parent->diff;
-    before.low = ref->next;
-    before.high = ref->diff;
-    ref = (idx_ref_s*)&after;
-    ref->next = node_index;
-    ref->byte = byte;
-    ref->bits = bits;
-    ref->flag = -1;
-    if (!DWCAS((DWORD*)parent, &before, after)) {
-        return SH_RETRY;
-    }
-    return SH_OK;
-}
-
-
-static sh_status_e free_data_gap(
-    shr_q_s *q,         // pointer to queue struct
-    long slot,          // start of slot range
-    long count          // number of slots to return
-)   {
-    sh_status_e status = SH_RETRY;
-
-    while (status == SH_RETRY) {
-        // check if tree is empty
-        if (((idx_ref_s*)&q->current->array[ROOT_FREE])->next == 0) {
-            status = add_idx_gap(q, slot, count, ROOT_FREE);
-            if (status == SH_OK) {
-                break;
-            }
-            continue;
-        }
-
-        long index = find_leaf(q, count, ROOT_FREE);
-        if (index == 0) {
-            return SH_ERR_NOMEM;
-        }
-        idx_leaf_s *leaf = (idx_leaf_s*)&q->current->array[index];
-
-        // evaluate differences in keys
-        uint8_t bits = 0;
-        uint8_t *key = (uint8_t*)&count;
-        /*
-            different orderings needed for endianness
-        */
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-        for (long byte = 0; byte < sizeof(long) ; byte++) {
-#else
-        for (long byte = sizeof(long) - 1; byte >= 0 ; byte--) {
-#endif
-            bits = key[byte]^leaf->key[byte];
-            if (bits) {
-                break;
-            }
-        }
-        if (bits == 0) {
-            // keys are equal
-            return add_to_leaf(q, leaf, slot);
-        }
-
-        status = insert_idx_gap(q, slot, count, ROOT_FREE);
-    }
-    return status;
 }
 
 
@@ -1412,24 +1181,18 @@ static long lookup_freed_data(
     if (slots > leaf->count) {
         return 0;
     }
-    if (leaf->allocs == 0) {
-        return 0;
-    }
     do {
         before.low = leaf->allocs;
         before.high = leaf->allocs_count;
+        if (before.low == 0) {
+            return 0;
+        }
         view = insure_in_range(q, before.low, 0);
         array = view.extent->array;
         after.low = (volatile long)array[before.low];
         after.high = before.high + 1;
     } while (before.low != 0 && !DWCAS((DWORD*)&leaf->allocs, &before, after));
-    if (leaf->count < 2 * slots) {
-        array[before.low] = leaf->count;
-    } else {
-        array[before.low + slots] = leaf->count - slots;
-        free_data_slots(q, before.low + slots);
-        array[before.low] = slots;
-    }
+    array[before.low] = leaf->count;
     return before.low;
 }
 
@@ -1440,47 +1203,44 @@ static view_s alloc_data_slots(
 )   {
     view_s view = {.status = SH_OK, .extent = q->current, .slot = 0};
     long *array = view.extent->array;
-    DWORD before;
-    DWORD after;
     long node_alloc;
-    long data_alloc;
-    long alloc_start;
+    long alloc_end;
 
     while (true) {
         if (array[ROOT_FREE] != 0) {
-            alloc_start = lookup_freed_data(q, slots);
-            view = insure_in_range(q, alloc_start, slots);
-            array = view.extent->array;
-            if (view.slot != 0) {
-                memset(&array[alloc_start + 1], 0, (slots - 1) << SZ_SHIFT);
-                return view;
+            alloc_end = lookup_freed_data(q, slots);
+            if (alloc_end > 0) {
+                view = insure_in_range(q, alloc_end, slots);
+                array = view.extent->array;
+                if (view.slot != 0) {
+                    memset(&array[alloc_end + 1], 0, (slots - 1) << SZ_SHIFT);
+                    return view;
+                }
             }
         }
 
-        // attempt to allocate new data slots from current extent
-        data_alloc = array[DATA_ALLOC];
-        node_alloc = array[NODE_ALLOC];
-        alloc_start = data_alloc - slots;
-        view = insure_in_range(q, alloc_start, slots);
+        long space = slots;
+        if (__builtin_popcountl(space) > 1) {
+            int bit_len = sizeof(space) * 8;
+            int pos = __builtin_clzl(space);
+            int shifts = bit_len - pos;
+            space = 1 << shifts;
+        }
+        node_alloc = array[DATA_ALLOC];
+        alloc_end = node_alloc + space;
+        // assert(alloc_end - node_alloc == space);
+        view = insure_in_range(q, node_alloc, space);
         array = view.extent->array;
-        if (view.slot == alloc_start && alloc_start > node_alloc) {
-            before.low = node_alloc;
-            before.high = data_alloc;
-            after.low = node_alloc;
-            after.high = alloc_start;
-            if (DWCAS((DWORD*)&array[NODE_ALLOC], &before, after)) {
-                view.slot = alloc_start;
-                array[alloc_start] = slots;
+        if (alloc_end < array[SIZE]) {
+            if (CAS(&array[DATA_ALLOC], &node_alloc, alloc_end)) {
+                memset(array+node_alloc, 0, space << SZ_SHIFT);
+                view.slot = node_alloc;
+                array[node_alloc] = space;
                 return view;
             }
             view.extent = q->current;
             array = view.extent->array;
             continue;
-        }
-
-        view = expand(q, view.extent, slots);
-        if (view.status != SH_OK) {
-            return view;
         }
     }
     return view;
@@ -1495,20 +1255,13 @@ static inline long calc_data_slots(
     space += (length >> SZ_SHIFT);
     // account for remainder
     if (length & REM) {
-        space++;
-    }
-
-    if (__builtin_popcountl(space) > 1) {
-        int bit_len = sizeof(space) * 8;
-        int pos = __builtin_clzl(space);
-        int shifts = bit_len - pos;
-        space = 1 << shifts;
+        space += 1;
     }
 
     return space;
 }
 
-void update_buffer_size(
+static inline void update_buffer_size(
     long *array,
     long space,
     long vcnt
@@ -1544,7 +1297,6 @@ static long copy_value(
     long current = view.slot;
     if (current >= HDR_END) {
         long *array = view.extent->array;
-        array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
         array[current + TYPE] = type;
@@ -1570,7 +1322,7 @@ static long calc_vector_slots(
         space += (vector[i].len >> SZ_SHIFT);
         // account for remainder
         if (vector[i].len & REM) {
-            space++;
+            space += 2;
         }
     }
 
@@ -1597,7 +1349,6 @@ static long copy_vector(
     long current = view.slot;
     if (current >= HDR_END) {
         long *array = view.extent->array;
-        array[current + DATA_SLOTS] = space;
         array[current + TM_SEC] = curr_time.tv_sec;
         array[current + TM_NSEC] = curr_time.tv_nsec;
         array[current + TYPE] = SH_VECTOR_T;
@@ -1961,6 +1712,9 @@ static long next_item(
     }
     long *array = view.extent->array;
     long next = array[slot];
+    if (next == 0) {
+        return 0;
+    }
     view = insure_in_range(q, next, 0);
     if (view.slot == 0) {
         return 0;
@@ -5414,8 +5168,8 @@ int main(void)
     test_monitor();
     test_listen();
     test_call();
-    test_free_data_slots();
-    test_first_fit_allocation();
+    // test_free_data_slots();
+    // test_first_fit_allocation();
     test_large_data_allocation();
     test_add_errors();
     test_add_wait_errors();
