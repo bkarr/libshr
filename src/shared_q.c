@@ -4109,15 +4109,15 @@ static void test_free_data_array4(long *array)
 
 static void test_free_data_slots(void)
 {
-    long test1[4] = {5, 6, 7, 8};
+    long test1[4] = {8, 16, 32, 64};
     test_free_data_array4(test1);
-    long test2[4] = {8, 7, 6, 5};
+    long test2[4] = {64, 32, 16, 8};
     test_free_data_array4(test2);
-    long test3[4] = {8, 6, 5, 7};
+    long test3[4] = {64, 16, 8, 32};
     test_free_data_array4(test3);
-    long test4[4] = {8, 5, 7, 6};
+    long test4[4] = {64, 8, 32, 16};
     test_free_data_array4(test4);
-    long test5[4] = {5, 8, 6, 7};
+    long test5[4] = {8, 64, 16, 32};
     test_free_data_array4(test5);
 }
 
@@ -4168,13 +4168,11 @@ static void test_first_fit_allocation(void)
     assert(view.extent->array[view.slot] == 32);
     view = alloc_data_slots(q, 20);
     assert(view.slot == biggest_slot);
-    assert(view.extent->array[view.slot] == 20);
+    assert(view.extent->array[view.slot] == 64);
     view = alloc_data_slots(q, 20);
-    assert(view.slot == biggest_slot + 20);
-    assert(view.extent->array[view.slot] == 20);
+    assert(view.extent->array[view.slot] == 32);
     view = alloc_data_slots(q, 20);
-    assert(view.slot == biggest_slot + 40);
-    assert(view.extent->array[view.slot] == 24);
+    assert(view.extent->array[view.slot] == 32);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
@@ -5168,8 +5166,8 @@ int main(void)
     test_monitor();
     test_listen();
     test_call();
-    // test_free_data_slots();
-    // test_first_fit_allocation();
+    test_free_data_slots();
+    test_first_fit_allocation();
     test_large_data_allocation();
     test_add_errors();
     test_add_wait_errors();
