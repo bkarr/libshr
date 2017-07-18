@@ -143,7 +143,7 @@ enum shr_q_disp
     LISTEN_PID,                     // arrival notification process id
     LISTEN_SIGNAL,                  // arrival notification signal
     DATA_ALLOC,                     // next available data allocation slot
-    SPARE,                          // spare slot
+    EXPAND_SIZE,                    // size for current expansion
     EVENT_HEAD,                     // event queue head
     EVENT_HD_CNT,                   // event queue head counter
     ROOT_FREE,                      // root of free data index
@@ -160,8 +160,8 @@ enum shr_q_disp
     NOTIFY_SIGNAL,                  // event notification signal
     READ_SEM,                       // read semaphore
     WRITE_SEM = (READ_SEM + 4),     // write semaphore
-    IO_SEM = (WRITE_SEM + 4),       // i/o semaphore
-    CALL_PID = (IO_SEM +4),         // demand call notification process id
+    SPARES = (WRITE_SEM + 4),       // spare slots
+    CALL_PID = (SPARES +4),         // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
     CALL_BLOCKS,                    // count of blocked remove calls
     CALL_UNBLOCKS,                  // count of unblocked remove calls
@@ -279,7 +279,8 @@ static char *status_str[] = {
 
 static void *null = NULL;
 
-static view_s insure_in_range(shr_q_s *q, long start, long slots);
+static view_s insure_in_range(shr_q_s *q, long start);
+static view_s insure_fit(shr_q_s *q, long start, long slots);
 
 /*==============================================================================
 
@@ -481,6 +482,7 @@ static sh_status_e init_array(
     unsigned int max_depth  // max depth allowed at which add of item is blocked
 )   {
     array[SIZE] = slots;
+    array[EXPAND_SIZE] = slots << SZ_SHIFT;
     memcpy(&array[TAG], SHRQ, sizeof(SHRQ) - 1);
 
     int rc = sem_init((sem_t*)&array[READ_SEM], 1, 0);
@@ -488,11 +490,6 @@ static sh_status_e init_array(
         return SH_ERR_NOSUPPORT;
     }
     rc = sem_init((sem_t*)&array[WRITE_SEM], 1, max_depth);
-    if (rc < 0) {
-        return SH_ERR_NOSUPPORT;
-    }
-    // IO_SEM acts as shared memory mutex for resizing mmapped file
-    rc = sem_init((sem_t*)&array[IO_SEM], 1, 1);
     if (rc < 0) {
         return SH_ERR_NOSUPPORT;
     }
@@ -596,7 +593,7 @@ static void add_end(
         next = tail_before.low;
         array[slot + 1] = tail_before.high + 1;
         next_after.high = tail_before.high + 1;
-        view = insure_in_range(q, next, 0);
+        view = insure_in_range(q, next);
         array = (atomictype * volatile)view.extent->array;
         if (tail_before.low == array[next]) {
             if (DWCAS((DWORD*)&array[next], &tail_before, next_after)) {
@@ -687,6 +684,7 @@ static view_s expand(
     view_s view = {.status = SH_OK, .extent = extent};
     atomictype *array = (atomictype*)extent->array;
     long size = calculate_realloc_size(extent, slots);
+    long prev = array[SIZE] << SZ_SHIFT;
 
     if (extent != q->current) {
         view.extent = q->current;
@@ -697,39 +695,22 @@ static view_s expand(
         return resize_extent(q, extent);
     }
 
-    /*
-     *  The only portion of the code that contains a mutex that will potentially
-     *  cause other processes to block by locking mutex.
-     */
-
-    while (sem_wait((sem_t*)&array[IO_SEM]) < 0) {
-        if (errno == EINVAL) {
-            view.status = SH_ERR_STATE;
-            return view;
-        }
+    // attempt to update expand size
+    if (size > prev) {
+        CAS(&array[EXPAND_SIZE], &prev, size);
     }
 
     // attempt to extend backing store
-    if (extent == q->current && extent->slots == array[SIZE]) {
-        while (ftruncate(q->fd, size) < 0) {
-            if (errno != EINTR) {
-                view.status = SH_ERR_NOMEM;
-                break;
-            }
-        }
-
-        if (view.status == SH_OK) {
-            array[SIZE] = size >> SZ_SHIFT;
-        }
-    }
-
-    // release mutex
-    while (sem_post((sem_t*)&array[IO_SEM]) < 0) {
-        if (errno == EINVAL) {
-            view.status = SH_ERR_STATE;
+    while (ftruncate(q->fd, array[EXPAND_SIZE]) < 0) {
+        if (errno != EINTR) {
+            view.status = SH_ERR_NOMEM;
             return view;
         }
     }
+
+    // attempt to update size with reallocated value
+    prev >>= SZ_SHIFT;
+    CAS(&array[SIZE], &prev, size >> SZ_SHIFT);
 
     if (extent->slots != array[SIZE]) {
         view = resize_extent(q, extent);
@@ -740,16 +721,37 @@ static view_s expand(
 
 static inline view_s insure_in_range(
     shr_q_s *q,         // pointer to queue struct
+    long start          // starting slot
+)   {
+    view_s view = {.status = SH_OK, .slot = 0, .extent = q->current};
+    // if (start < HDR_END) {
+    //     view.status = SH_ERR_ARG;
+    //     return view;
+    // }
+    if (start >= view.extent->slots) {
+        view = resize_extent(q, view.extent);
+    }
+    view.slot = start;
+    return view;
+}
+
+
+static inline view_s insure_fit(
+    shr_q_s *q,         // pointer to queue struct
     long start,         // starting slot
     long slots          // slot count
 )   {
     view_s view = {.status = SH_OK, .slot = 0, .extent = q->current};
     if (start < HDR_END) {
+        view.status = SH_ERR_ARG;
         return view;
     }
-    if (start + slots >= view.extent->slots) {
-        view = resize_extent(q, view.extent);
-        if (start + slots >= view.extent->slots) {
+    long end = start + slots;
+    if (end >= view.extent->slots) {
+        if (view.extent != q->current) {
+            view = resize_extent(q, view.extent);
+        }
+        while (end >= view.extent->slots) {
             view = expand(q, view.extent, slots);
             if (view.status != SH_OK) {
                 return view;
@@ -774,7 +776,7 @@ static long remove_front(
     DWORD after;
 
     if (ref >= HDR_END && ref != array[tail]) {
-        view = insure_in_range(q, ref, 0);
+        view = insure_in_range(q, ref);
         array = view.extent->array;
         after.low = array[ref];
         before.high = gen;
@@ -806,7 +808,7 @@ static view_s alloc_node_slots(
         while (node_alloc != array[FREE_TAIL]) {
             node_alloc = remove_front(q, node_alloc, gen, FREE_HEAD, FREE_TAIL);
             if (node_alloc > 0) {
-                view = insure_in_range(q, node_alloc, NODE_SIZE);
+                view = insure_fit(q, node_alloc, NODE_SIZE);
                 array = view.extent->array;
                 if (view.slot != 0) {
                     memset(&array[node_alloc], 0, slots << SZ_SHIFT);
@@ -820,7 +822,7 @@ static view_s alloc_node_slots(
         // attempt to allocate new node from current extent
         node_alloc = array[DATA_ALLOC];
         alloc_end = node_alloc + slots;
-        view = insure_in_range(q, node_alloc, NODE_SIZE);
+        view = insure_fit(q, node_alloc, NODE_SIZE);
         array = view.extent->array;
         if (alloc_end < array[SIZE]) {
             if (CAS(&array[DATA_ALLOC], &node_alloc, alloc_end)) {
@@ -850,7 +852,7 @@ static long find_leaf(
 
     while (ref->flag < 0) {
         node_slot = ref->next;
-        view = insure_in_range(q, node_slot, 0);
+        view = insure_in_range(q, node_slot);
         if (view.slot == 0) {
             return 0;
         }
@@ -859,7 +861,7 @@ static long find_leaf(
         long direction = (1 + (ref->bits | key[ref->byte])) >> 8;
         ref = &node->child[direction];
     }
-    view = insure_in_range(q, ref->next, 0);
+    view = insure_in_range(q, ref->next);
     if (view.slot == 0) {
         return 0;
     }
@@ -880,14 +882,14 @@ static long walk_tree(
 
     while (top > 0 && (retries--)) {
         long ref_index = stack[--top];
-        view = insure_in_range(q, ref_index, 0);
+        view = insure_in_range(q, ref_index);
         if (view.slot != ref_index) {
             return 0;
         }
         array = view.extent->array;
         idx_ref_s *ref = (idx_ref_s*)&array[ref_index];
         if (ref->flag >= 0) {
-            view = insure_in_range(q, ref->next, 0);
+            view = insure_in_range(q, ref->next);
             if (view.slot != ref->next) {
                 return 0;
             }
@@ -898,7 +900,7 @@ static long walk_tree(
             }
             continue;
         }
-        view = insure_in_range(q, ref->next, 0);
+        view = insure_in_range(q, ref->next);
         if (view.slot != ref->next) {
             return 0;
         }
@@ -937,7 +939,7 @@ static long find_first_fit(
 
     while (ref->flag < 0) {
         node_slot = ref->next;
-        view = insure_in_range(q, node_slot, 0);
+        view = insure_in_range(q, node_slot);
         if (view.slot == 0) {
             return 0;
         }
@@ -955,7 +957,7 @@ static long find_first_fit(
             }
         }
     }
-    view = insure_in_range(q, ref->next, 0);
+    view = insure_in_range(q, ref->next);
     if (view.slot == 0) {
         return 0;
     }
@@ -973,7 +975,7 @@ static sh_status_e add_to_leaf(
     idx_leaf_s *leaf,
     long slot
 )   {
-    view_s view = insure_in_range(q, slot, 0);
+    view_s view = insure_in_range(q, slot);
     if (view.slot == 0) {
         return SH_ERR_NOMEM;
     }
@@ -1066,7 +1068,7 @@ static sh_status_e insert_idx_node(
     ref->next = leaf_index;
 
     // find place to insert new node in tree
-    view = insure_in_range(q, ref_index, 0);
+    view = insure_in_range(q, ref_index);
     array = view.extent->array;
     idx_ref_s *parent = (idx_ref_s*)&array[ref_index];
     while (true) {
@@ -1080,7 +1082,7 @@ static sh_status_e insert_idx_node(
             break;
         }
         long direction = ((1 + (parent->bits | key[parent->byte])) >> 8);
-        view = insure_in_range(q, parent->next, 0);
+        view = insure_in_range(q, parent->next);
         array = view.extent->array;
         idx_node_s *pnode = (idx_node_s*)&array[parent->next];
         parent = &pnode->child[direction];
@@ -1175,7 +1177,7 @@ static long lookup_freed_data(
     if (index == 0) {
         return 0;
     }
-    view_s view = insure_in_range(q, index, 0);
+    view_s view = insure_in_range(q, index);
     long *array = view.extent->array;
     idx_leaf_s *leaf = (idx_leaf_s*)&array[index];
     if (slots > leaf->count) {
@@ -1187,7 +1189,7 @@ static long lookup_freed_data(
         if (before.low == 0) {
             return 0;
         }
-        view = insure_in_range(q, before.low, 0);
+        view = insure_in_range(q, before.low);
         array = view.extent->array;
         after.low = (volatile long)array[before.low];
         after.high = before.high + 1;
@@ -1210,7 +1212,7 @@ static view_s alloc_data_slots(
         if (array[ROOT_FREE] != 0) {
             alloc_end = lookup_freed_data(q, slots);
             if (alloc_end > 0) {
-                view = insure_in_range(q, alloc_end, slots);
+                view = insure_fit(q, alloc_end, slots);
                 array = view.extent->array;
                 if (view.slot != 0) {
                     memset(&array[alloc_end + 1], 0, (slots - 1) << SZ_SHIFT);
@@ -1229,11 +1231,10 @@ static view_s alloc_data_slots(
         node_alloc = array[DATA_ALLOC];
         alloc_end = node_alloc + space;
         // assert(alloc_end - node_alloc == space);
-        view = insure_in_range(q, node_alloc, space);
+        view = insure_fit(q, node_alloc, space);
         array = view.extent->array;
-        if (alloc_end < array[SIZE]) {
+        if (alloc_end < view.extent->slots) {
             if (CAS(&array[DATA_ALLOC], &node_alloc, alloc_end)) {
-                memset(array+node_alloc, 0, space << SZ_SHIFT);
                 view.slot = node_alloc;
                 array[node_alloc] = space;
                 return view;
@@ -1574,7 +1575,7 @@ static void stack_push(
 )   {
     DWORD stack_before;
     DWORD stack_after;
-    view_s view = insure_in_range(q, slot, 0);
+    view_s view = insure_in_range(q, slot);
     atomictype * volatile array = (atomictype*)view.extent->array;
 
     do {
@@ -1706,7 +1707,7 @@ static long next_item(
     shr_q_s *q,          // pointer to queue
     long slot
 )   {
-    view_s view = insure_in_range(q, slot, 0);
+    view_s view = insure_in_range(q, slot);
     if (view.slot == 0) {
         return 0;
     }
@@ -1715,7 +1716,7 @@ static long next_item(
     if (next == 0) {
         return 0;
     }
-    view = insure_in_range(q, next, 0);
+    view = insure_in_range(q, next);
     if (view.slot == 0) {
         return 0;
     }
@@ -1739,7 +1740,7 @@ static bool item_exceeds_limit(
     if (timelimit->tv_sec == 0 && timelimit->tv_nsec == 0) {
         return false;
     }
-    view_s view = insure_in_range(q, item_slot, 0);
+    view_s view = insure_in_range(q, item_slot);
     long *array = view.extent->array;
     struct timespec diff = {0, 0};
     struct timespec *item = (struct timespec *)&array[item_slot + TM_SEC];
@@ -1856,7 +1857,7 @@ static long remove_top(
 
     if (top >= HDR_END && top == array[STACK_HEAD] &&
         gen == array[STACK_HD_CNT]) {
-        view = insure_in_range(q, top, 0);
+        view = insure_in_range(q, top);
         array = view.extent->array;
         after.low = array[top];
         before.high = gen;
@@ -1877,7 +1878,7 @@ static long stack_pop(
     long *array = q->current->array;
     long gen = array[STACK_HD_CNT];
     long top = array[STACK_HEAD];
-    view_s view = insure_in_range(q, top, 0);
+    view_s view = insure_in_range(q, top);
     array = view.extent->array;
     long data_slot = array[top + VALUE_OFFSET];
     if (data_slot == 0) {
@@ -1901,7 +1902,7 @@ static long queue_remove(
     if (head == array[TAIL]) {
         return 0;
     }
-    view_s view = insure_in_range(q, head, 0);
+    view_s view = insure_in_range(q, head);
     array = view.extent->array;
     long data_slot = next_item(q, head);
     if (data_slot == 0) {
@@ -1940,13 +1941,13 @@ static sq_item_s deq(
             continue;
         }
         // insure data is accessible
-        view = insure_in_range(q, data_slot, 0);
+        view = insure_in_range(q, data_slot);
         if (view.slot == 0) {
             break;
         }
         array = view.extent->array;
         long end_slot = data_slot + array[data_slot + DATA_SLOTS] - 1;
-        view = insure_in_range(q, end_slot, 0);
+        view = insure_in_range(q, end_slot);
         if (view.slot == 0) {
             break;
         }
@@ -1997,14 +1998,14 @@ static sq_event_e next_event(
     shr_q_s *q,          // pointer to queue
     long slot
 )   {
-    view_s view = insure_in_range(q, slot, 0);
+    view_s view = insure_in_range(q, slot);
     if (view.slot == 0) {
         return SQ_EVNT_NONE;
     }
     long *array = view.extent->array;
 
     long next = array[slot];
-    view = insure_in_range(q, next, 0);
+    view = insure_in_range(q, next);
     if (view.slot == 0) {
         return SQ_EVNT_NONE;
     }
@@ -2295,10 +2296,6 @@ extern sh_status_e shr_q_destroy(
         status = SH_ERR_SYS;
     }
     rc = sem_destroy((sem_t*)&(*q)->current->array[WRITE_SEM]);
-    if (rc < 0) {
-        status = SH_ERR_SYS;
-    }
-    rc = sem_destroy((sem_t*)&(*q)->current->array[IO_SEM]);
     if (rc < 0) {
         status = SH_ERR_SYS;
     }
@@ -3430,14 +3427,14 @@ extern sh_status_e shr_q_clean(
         if (head == array[TAIL]) {
             break;
         }
-        view_s view = insure_in_range(q, head, 0);
+        view_s view = insure_in_range(q, head);
         array = view.extent->array;
         long data_slot = next_item(q, head);
         if (data_slot == 0) {
             break;
         }
         // insure data is accessible
-        view = insure_in_range(q, data_slot, 0);
+        view = insure_in_range(q, data_slot);
         if (view.slot == 0) {
             break;
         }
