@@ -44,6 +44,7 @@ THE SOFTWARE.
 #include <sys/times.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #define GETTID() (syscall(__NR_gettid))
 

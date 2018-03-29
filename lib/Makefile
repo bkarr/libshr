@@ -2,7 +2,7 @@ SHELL = /bin/sh
 .SUFFIXES:
 .SUFFIXES: .c .o
 
-OBJECTS = ../src/shared_q.o
+OBJECTS = ../src/shared_q.o ../src/shared.o ../src/shared_int.o
 LIB = libshr.a
 SHARED_LIB = libshr.so
 

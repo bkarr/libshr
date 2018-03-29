@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015-2016 Bryan Karr
+Copyright (c) 2015-2017 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -86,7 +86,7 @@ typedef enum
     SQ_EVNT_INIT,           // first item added to queue
     SQ_EVNT_LIMIT,          // queue limit reached
     SQ_EVNT_TIME,           // max time limit reached
-    SQ_EVNT_LEVEL,          // depth level reached
+    SQ_EVNT_LEVEL,          // depth level reached 
     SQ_EVNT_EMPTY,          // last item on queue removed
     SQ_EVNT_NONEMPTY        // item added to empty queue
 } sq_event_e;
@@ -176,10 +176,11 @@ extern sh_status_e shr_q_create(
 
     SH_OK           on success
     SH_ERR_ARG      if pointer to queue struct or name is not NULL
+	SH_ERR_NOMEM	failed memory allocation
     SH_ERR_ACCESS   on permissions error for queue name
     SH_ERR_EXIST    if queue does not already exist
     SH_ERR_PATH     if error in queue name
-    SH_ERR_STATE    if incompatible implementation version number
+    SH_ERR_STATE    if incompatible implementation
     SH_ERR_SYS      if system call returns an error
 */
 extern sh_status_e shr_q_open(
@@ -519,16 +520,6 @@ extern sq_item_s shr_q_remove_timedwait(
 */
 extern sq_event_e shr_q_event(
     shr_q_s *q                  // pointer to queue struct -- not NULL
-);
-
-
-/*
-    shr_q_explain -- return a null-terminated string explanation of status code
-
-    returns non-NULL null-terminated string error explanation
-*/
-extern char *shr_q_explain(
-    sh_status_e status          // status code
 );
 
 

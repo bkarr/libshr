@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015 Bryan Karr
+Copyright (c) 2017 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,11 +26,42 @@ THE SOFTWARE.
 #ifndef SHARED_H_
 #define SHARED_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// define useful time related macros
+#define timespecadd(a, b, result)                           \
+    do {                                                    \
+        (result)->tv_sec = (a)->tv_sec + (b)->tv_sec;       \
+        (result)->tv_nsec = (a)->tv_nsec + (b)->tv_nsec;    \
+        if ((result)->tv_nsec >= 1000000000L) {             \
+            (result)->tv_sec++;                             \
+            (result)->tv_nsec -= 1000000000L;               \
+        }                                                   \
+    } while(0)
+
+#define timespecsub(a, b, result)                           \
+  do {                                                      \
+    (result)->tv_sec = (a)->tv_sec - (b)->tv_sec;           \
+    (result)->tv_nsec = (a)->tv_nsec - (b)->tv_nsec;        \
+    if ((result)->tv_nsec < 0) {                            \
+      --(result)->tv_sec;                                   \
+      (result)->tv_nsec += 1000000000;                      \
+    }                                                       \
+  } while (0)
+
+#define timespeccmp(a, b, cmp)                              \
+    (((a)->tv_sec == (b)->tv_sec) ?                         \
+    ((a)->tv_nsec cmp (b)->tv_nsec) :                       \
+    ((a)->tv_sec cmp (b)->tv_sec))
+
+
 typedef enum
 {
     SH_OK,                  // success
     SH_RETRY,               // retry previous
-    SH_ERR_EMPTY,           // no items on queue
+    SH_ERR_EMPTY,           // no items available
     SH_ERR_LIMIT,           // depth limit reached
     SH_ERR_ARG,             // invalid argument
     SH_ERR_NOMEM,           // not enough memory to satisfy request
@@ -39,7 +70,10 @@ typedef enum
     SH_ERR_STATE,           // invalid state
     SH_ERR_PATH,            // problem with path name
     SH_ERR_NOSUPPORT,       // required operation not supported
-    SH_ERR_SYS              // system error
+    SH_ERR_SYS,             // system error
+    SH_ERR_CONFLICT,        // update conflict
+    SH_ERR_NO_MATCH,        // no match found for key
+    SH_ERR_MAX
 } sh_status_e;
 
 
@@ -57,5 +91,19 @@ typedef enum
     SH_STRUCT_T,            // binary struct
 } sh_type_e;
 
+
+/*
+    shr_explain -- return a null-terminated string explanation of status code
+
+    returns non-NULL null-terminated string error explanation
+*/
+extern char *shr_explain(
+    sh_status_e status          // status code
+);
+
+#ifdef __cplusplus
+}
+
+#endif
 
 #endif // SHARED_H_
