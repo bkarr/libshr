@@ -1,51 +1,109 @@
-SHELL = /bin/sh
+SHELL = /bin/bash
 .SUFFIXES:
-.SUFFIXES: .c .o
+.SECONDARY:
 
 CC = gcc
-OBJECTS = shared_q.o
-TESTEXE = test_shrq
+CFLAGS = -I../include -g3 -fPIC -std=gnu11 -pedantic -Wall
+OBJECTS = shared.o shared_q.o shared_map.o shared_int.o
+TESTDIRS = test
+TESTINT = test_internal
+TESTSHR = test_share
+TESTQ = test_shrq
+TESTMAP = test_shrmap
+TESTS = $(TESTINT) $(TESTSHR) $(TESTQ) $(TESTMAP)
 LIB = -lrt -lpthread
 
 all: all64
 
-all64: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
-all64: shared_q
+all64: CFLAGS += -mcx16 -c -O3
+all64: shared shared_int shared_q
 
-all32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O0 -fPIC -std=gnu99 -Wall -o "$@".o
-all32: shared_q
+all32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS_ -O1
+all32: shared shared_int shared_q shared_map
 
 debug: debug64
 
-debug64: CFLAGS = -mcx16 -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
-debug64: shared_q
+debug64: CFLAGS += -mcx16 -c -O0
+debug64: shared shared_int shared_q shared_map
 
-debug32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -c -g3 -O0 -fPIC -std=gnu11 -pedantic -Wall -o "$@".o
-debug32: shared_q
+debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS_ -O0
+debug32: shared shared_int shared_q shared_map
 
-check: check64
+check: all64
+	@set -e
+	@for i in $(TESTDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) check; \
+		cd ..; \
+	done
 
-check32: CFLAGS = -m32 -D__STDC_NO_ATOMICS_ -I../include -DTESTMAIN -g3 -O0 -std=gnu99 -Wall -o $(TESTEXE)
-check32: clean shared_q
-	./$(TESTEXE)
+check64: CFLAGS += -mcx16 -DTESTMAIN -O0
+check64: clean shared64 checkq64
+#check64: clean shared64 checkq64 checkmap64
 
-check64: CFLAGS = -mcx16 -I../include -DTESTMAIN -g3 -O0 -std=gnu11 -pedantic -Wall -o $(TESTEXE)
-check64: clean shared_q
-	./$(TESTEXE)
+shared64: CFLAGS += -mcx16 -c -O0
+shared64: shared shared_int
+
+checkq64: CFLAGS += -mcx16 -c -O0
+checkq64: shared64 shared_q
+	@cd test && $(MAKE) checkq64 && cd ..
+
+checkmap64: CFLAGS += -o $(TESTMAP)
+checkmap64: shared64 shared_map
+checkint64: shared64
+	@cd test && $(MAKE) checkint64 && cd ..
+
+checkshr64: shared64
+	@cd test && $(MAKE) checkshr64 && cd ..
+
+check32: CFLAGS += -m32 -D__STDC_NO_ATOMICS_ -DTESTMAIN -O0
+check32: clean shared32 checkq32 
+#	@for name in $(TESTS); do echo ./$$name; ./$$name; done
+
+shared32: CFLAGS += -m32 -c -O0
+shared32: shared shared_int
+
+checkq32: CFLAGS += -m32 -c -O0
+checkq32: shared32 shared_q
+	@cd test && $(MAKE) checkq32 && cd ..
+
+checkmap32: CFLAGS += -o $(TESTMAP)
+checkmap32: shared_map
+checkint32: shared32
+	@set -e
+	@for i in $(TESTDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) checkint32; \
+		cd ..; \
+	done
+
+checkshr32: shared32
+	@set -e
+	@for i in $(TESTDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) checkshr32; \
+		cd ..; \
+	done
 
 
 %: %.c
 	@$(CC) $< $(CFLAGS) $(LIB)
 
 clean:
-	@if test -f $(TESTEXE); then \
-		rm $(TESTEXE); \
-	fi
-	@if test -f $(OBJECTS); then \
-		rm $(OBJECTS); \
-	fi
 	@if test -f core*; then \
-		rm core*; \
+		@rm core*; \
 	fi
+	@rm -f -- $(OBJECTS) $(TESTS)
+	@for i in $(TESTDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) clean; \
+		cd ..; \
+	done
 
-.PHONY: all all64 all32 debug debug64 debug32 check check64 check32 clean
+.PHONY: all all64 all32 debug debug64 debug32 check check64 checkmap64 checkq64
+.PHONY: check32 checkmap32 checkq32 clean shared64 shared32 checkint64 checkint32
+.PHONY: checkshr64 checkshr32

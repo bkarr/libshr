@@ -1,0 +1,347 @@
+/*
+The MIT License (MIT)
+
+Copyright (c) 2017 Bryan Karr
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+*/
+
+
+#ifndef SHAREDINT_H_
+#define SHAREDINT_H_
+
+#include <limits.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <shared.h>
+
+
+#if (__STDC_VERSION__ >= 201112L)
+#include <stdatomic.h>
+#endif
+
+#if ((__STDC_VERSION__ < 201112L) || __STDC_NO_ATOMICS__)
+typedef volatile long atomictype;
+#else
+typedef atomic_long atomictype;
+#endif
+
+#ifdef __x86_64__
+#define SZ_SHIFT 3
+#define REM 7
+#else
+#define SZ_SHIFT 2
+#define REM 3
+#endif
+
+#define LONG_BIT (CHAR_BIT * sizeof(long))
+
+// define unchanging file system related constants
+#define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+#define SHR_OBJ_DIR "/dev/shm/"
+
+
+// define useful integer constants (mostly sizes and offsets)
+enum shr_constants
+{
+    PAGE_SIZE = 4096,       // initial size of memory mapped file for queue
+    TSTACK_DEPTH = 16,      // depth of stack for critbit trie search
+};
+
+
+
+// define shared data structure base offsets
+enum shr_base_disp
+{
+    TAG = 0,                        // queue identifier tag
+    VERSION,                        // implementation version number
+    SIZE,                           // size of queue array
+    EXPAND_SIZE,                    // size for current expansion
+    FREE_HEAD,                      // free node list head
+    FREE_HD_CNT,                    // free node head counter
+    DATA_ALLOC,                     // next available data allocation slot
+    COUNT,                          // number of items in structure
+    ROOT_FREE,                      // root of free data index
+    ROOT_FREE_CNT,                  // free data root version counter
+    BUFFER,                         // max buffer size needed to read
+    FLAGS,                          // configuration flag values
+    ID_CNTR,                        // unique id/gen counter
+    SPARE,                          // spare slot
+    FREE_TAIL,                      // free node list tail
+    FREE_TL_CNT,                    // free node tail counter
+    BASE
+};
+
+
+typedef unsigned long ulong;
+
+typedef struct {
+    ulong low;
+    ulong high;
+} DWORD;
+
+/*
+    reference to critbit trie node
+*/
+typedef struct idx_ref idx_ref_s;
+
+
+/*
+    internal node of critbit trie index
+*/
+typedef struct idx_node idx_node_s;
+
+
+/*
+    leaf node of critbit trie index
+*/
+typedef struct idx_leaf idx_leaf_s;
+
+/*
+    structure for managing mmapped data
+*/
+typedef struct extent
+{
+    struct extent *next;
+    long *array;
+    long size;
+    long slots;
+} extent_s;
+
+/*
+
+*/
+typedef struct view
+{
+    sh_status_e status;
+    long slot;
+    extent_s *extent;
+} view_s;
+
+
+#define BASEFIELDS          \
+    char *name;             \
+    extent_s *prev;         \
+    extent_s *current;      \
+    atomictype accessors;   \
+    int fd;                 \
+    int prot;               \
+    int flags
+
+/*
+    base structure
+*/
+typedef struct shr_base
+{
+    BASEFIELDS;
+} shr_base_s;
+
+
+
+#if (__STDC_VERSION__ < 201112L)
+
+#define AFS(mem, v) __sync_fetch_and_sub(mem, v)
+#define AFA(mem, v) __sync_fetch_and_add(mem, v)
+
+
+/*
+    CAS -- atomic compare and swap
+
+    Note:  Use atomic builtins because cmpxchg instructions clobber ebx register
+    which is PIC register, so using builtins to be safe
+*/
+static inline char CAS(
+    volatile long *mem,
+    volatile long *old,
+    long new
+)   {
+    return __sync_bool_compare_and_swap((long*)mem, *(long*)old, new);
+}
+
+
+#ifdef __x86_64__
+
+/*
+    DWCAS -- atomic double word compare and swap (64 bit)
+*/
+static inline char DWCAS(
+    volatile DWORD *mem,
+    DWORD *old,
+    DWORD new
+)   {
+    uint64_t  old_h = old->high, old_l = old->low;
+    uint64_t  new_h = new.high, new_l = new.low;
+
+    char r = 0;
+    __asm__ __volatile__("lock; cmpxchg16b (%6);"
+    "setz %7; "
+    : "=a" (old_l),
+    "=d" (old_h)
+    : "0" (old_l),
+    "1" (old_h),
+    "b" (new_l),
+    "c" (new_h),
+    "r" (mem),
+    "m" (r)
+    : "cc", "memory");
+    return r;
+}
+
+#else
+
+/*
+    DWCAS -- atomic double word compare and swap (32 bit)
+*/
+
+static inline char DWCAS(
+    volatile DWORD *mem,
+    DWORD *old,
+    DWORD new
+)   {
+    return __sync_bool_compare_and_swap((long long*)mem, *(long long*)old, \
+                                        *(long long*)&new);
+}
+
+#endif
+
+#else
+
+#define AFS(mem, v) atomic_fetch_sub_explicit(mem, v, memory_order_relaxed)
+#define AFA(mem, v) atomic_fetch_add_explicit(mem, v, memory_order_relaxed)
+#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new,\
+            memory_order_relaxed, memory_order_relaxed)
+#define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, \
+              new, memory_order_relaxed, memory_order_relaxed)
+
+#endif
+
+
+extern sh_status_e convert_to_status(
+    int err                 // errno value
+);
+
+extern sh_status_e validate_name(
+    char const * const name
+);
+
+
+extern sh_status_e validate_existence(
+    char const * const name,        // name string of shared memory file
+    size_t *size                    // pointer to size field -- possibly NULL
+);
+
+extern sh_status_e create_base_object(
+    shr_base_s **base,      // address of base struct pointer -- not NULL
+    size_t size,            // size of structure to allocate
+    char const * const name,// name of q as a null terminated string -- not NULL
+    char const * const tag, // tag to initialize base shared memory structure
+    int tag_len,            // length of tag
+    long version            // version for memory layout
+);
+
+
+extern void init_data_allocator(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long start          // start location for data allocations
+);
+
+
+extern bool set_flag(
+    long *array,
+    long indicator
+);
+
+
+extern bool clear_flag(
+    long *array,
+    long indicator
+);
+
+
+extern void update_buffer_size(
+    long *array,
+    long space,
+    long vcnt
+);
+
+
+extern view_s resize_extent(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    extent_s *extent    // pointer to working extent -- not NULL
+);
+
+
+extern view_s expand(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    extent_s *extent,   // pointer to current extent -- not NULL
+    long slots          // number of slots to allocate
+);
+
+
+extern view_s insure_in_range(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long start          // starting slot
+);
+
+
+extern void add_end(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long slot,          // slot reference
+    long tail           // tail slot of list
+);
+
+
+extern long remove_front(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long ref,           // expected slot number -- 0 if no interest
+    long gen,           // generation count
+    long head,          // head slot of list
+    long tail           // tail slot of list
+);
+
+
+extern view_s alloc_idx_slots(
+    shr_base_s *base    // pointer to base struct -- not NULL
+);
+
+
+extern view_s alloc_new_data(
+    shr_base_s *base,    // pointer to base struct -- not NULL
+    long slots
+);
+
+
+extern sh_status_e free_data_slots(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long slot           // start of slot range
+);
+
+
+extern view_s alloc_data_slots(
+    shr_base_s *base,   // pointer to base struct -- not NULL
+    long slots          // number of slots to allocate
+);
+
+extern void release_prev_extents(
+    shr_base_s *base    // pointer to base struct -- not NULL
+);
+
+#endif // SHAREDINT_H_
