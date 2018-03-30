@@ -5,7 +5,7 @@
        src="https://scan.coverity.com/projects/4816/badge.svg"/>
 </a>
 
-Version: 0.17.0
+Version: 0.17.1
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
