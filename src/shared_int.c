@@ -1093,7 +1093,7 @@ static view_s realloc_idx_slots(
 
             if ( view.slot != 0 ) {
 
-                memset( &array[ node_alloc ], 0, IDX_SIZE << SZ_SHIFT );
+                memset( (idx_leaf_s*)&array[ node_alloc ], 0, IDX_SIZE << SZ_SHIFT );
 
             }
 

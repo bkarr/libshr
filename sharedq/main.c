@@ -1199,17 +1199,6 @@ void pull_from_file(
     int fd,
     modifiers_s *param
 )   {
-    struct stat st;
-    int rc = stat(fname, &st);
-    if (rc < 0) {
-        printf("sharedq: invalid file\n");
-        return;
-    }
-
-    if (!S_ISREG(st.st_mode)) {
-        printf("sharedq: not a regular file\n");
-        return;
-    }
 
     FILE *in = fopen(fname, "r");
     if (in == NULL) {
@@ -1241,7 +1230,6 @@ void pull_from_file(
         }
     }
 
-    bool empty = false;
     int num = 0;
     struct signalfd_siginfo fd_si;
     struct timespec call_start;
@@ -1257,10 +1245,6 @@ void pull_from_file(
             return;
         }
 
-        if (empty) {
-            break;
-        }
-
         timespecsub(&call_end, &call_start, &call_intrvl);
         if (param->verbose) {
             printf("%li.%09li<--call %i from (%i)  wait time:  %li.%09li\n",
@@ -1270,13 +1254,8 @@ void pull_from_file(
             printf("<--call %i\n", ++num);
         }
 
-        if (empty) {
-            break;
-        }
-
         int rc = getline(&line, &ln_count, in);
         if (rc <= 0) {
-            empty = true;
             break;
         }
         sh_status_e status = shr_q_add(q, line, rc - 1);
