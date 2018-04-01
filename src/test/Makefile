@@ -13,6 +13,8 @@ TESTMAP = test_shrmap
 TESTS = $(TESTINT) $(TESTSHR) $(TESTQ) $(TESTMAP)
 LIB = -lrt -lpthread
 
+check: checkshr64 checkint64 checkq64
+
 checkq64: CFLAGS += -mcx16 ../shared_int.o ../shared.o ../shared_q.o -o $(TESTQ)
 checkq64: clean test_shrq
 	./$(TESTQ)

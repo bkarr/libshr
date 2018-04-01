@@ -128,7 +128,7 @@ static void test_monitor(void)
     status = shr_q_monitor(q, -1);
     assert(status == SH_ERR_ARG);
     status = shr_q_monitor(q, 0);
-    assert(status == SH_ERR_STATE);
+    assert(status == SH_OK);
     status = shr_q_monitor(q, SIGURG);
     assert(status == SH_OK);
     status = shr_q_monitor(q, SIGUSR1);
