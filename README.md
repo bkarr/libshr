@@ -5,7 +5,7 @@
        src="https://scan.coverity.com/projects/4816/badge.svg"/>
 </a>
 
-Version: 0.16.6
+Version: 0.17.1
 
 Library of data structures that exist in POSIX shared memory to be used
 for interprocess communications.
@@ -66,21 +66,21 @@ Performance/stress test:
 
     ~/libshr $ cd shrq_harness
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 100000
-    input SUM[0..100000]=5000050000 output=5000050000
-    time:  0.1365
+	input SUM[0..100000]=5000050000 output=5000050000
+	time:  0.1693
     ~/libshr/shrq_harness $ ./shrq_harness 2 1 1000000
     input SUM[0..1000000]=500000500000 output=500000500000
-    time:  1.3242
+    time:  1.6509
     ~/libshr/shrq_harness $ ./shrq_harness 8 1 530000
-    input SUM[0..2120000]=2247201060000 output=2247201060000
-    time:  0.9848
+	input SUM[0..2200000]=2420001100000 output=2420001100000
+	time:  0.9959
     ~/libshr/shrq_harness $ ./shrq_harness 8 1 5300000
-    input SUM[0..21200000]=224720010600000 output=224720010600000
-    time:  9.7644
+	input SUM[0..22000000]=242000011000000 output=242000011000000
+	time:  9.9698
 
 
 
- Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, 4 readers and 4 writers, the harness can write to and read from the queue at a rate of more than 2.12 million items per second.
+ Currently on my Core i7 based laptop with 1 thread per each of the 8 CPUs, 4 readers and 4 writers, the harness can write to and read from the queue at a rate of more than 2.2 million items per second.
 
 ## Install
     ~/libshr $ sudo make install
