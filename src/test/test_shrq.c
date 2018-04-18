@@ -152,7 +152,7 @@ static void test_listen(void)
     status = shr_q_listen(q, -1);
     assert(status == SH_ERR_ARG);
     status = shr_q_listen(q, 0);
-    assert(status == SH_ERR_STATE);
+    assert(status == SH_OK);
     status = shr_q_listen(q, SIGURG);
     assert(status == SH_OK);
     status = shr_q_listen(q, SIGUSR1);
@@ -176,7 +176,7 @@ static void test_call(void)
     status = shr_q_call(q, -1);
     assert(status == SH_ERR_ARG);
     status = shr_q_call(q, 0);
-    assert(status == SH_ERR_STATE);
+    assert(status == SH_OK);
     status = shr_q_call(q, SIGURG);
     assert(status == SH_OK);
     status = shr_q_call(q, SIGUSR1);
