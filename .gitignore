@@ -34,6 +34,8 @@ tags
 *.x86_64
 *.hex
 test_shrq
+test_internal
+test_shared
 sharedq/sharedq
 shrq_harness/shrq_harness
 cppconnect
