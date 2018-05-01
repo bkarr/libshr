@@ -8,6 +8,8 @@ SHARED_LIB = libshr.so
 
 all: all64
 
+rh7: all64
+
 all64: $(OBJECTS)
 	@ar -r $(LIB) $(OBJECTS)
 	@gcc -shared -o $(SHARED_LIB) $(OBJECTS)
