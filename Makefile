@@ -17,6 +17,15 @@ all:
 		cd ..; \
 	done
 
+rh7:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) rh7; \
+		cd ..; \
+	done
+
 all64:
 	@set -e
 	@for i in $(MKDIRS); \
