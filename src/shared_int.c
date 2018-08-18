@@ -50,7 +50,7 @@ typedef int16_t halfword;
 // define useful integer constants (mostly sizes and offsets)
 enum shr_int_constants
 {
-  
+
     IDX_SIZE = 4,           // index node slot count
 
 };
@@ -199,7 +199,7 @@ extern sh_status_e validate_name(
     }
 
     size_t len = strlen( name );
-    
+
     if ( len == 0 ) {
 
         return SH_ERR_PATH;
@@ -231,7 +231,7 @@ static void build_file_path(
     int size                        // buffer size
 
 )   {
-    
+
     // initialize buffer
     memset( buffer, 0, size );
 
@@ -271,8 +271,8 @@ static void build_file_path(
     SH_ERR_SYS      input/output error
     SH_ERR_NOMEM    not enough memory
     SH_ERR_PATH     problem with name too long, or with path
-    SH_ERR_STATE    size != NULL and file has a length, or length is not page 
-                    size multiple 
+    SH_ERR_STATE    size != NULL and file has a length, or length is not page
+                    size multiple
 */
 extern sh_status_e validate_existence(
 
@@ -313,7 +313,7 @@ extern sh_status_e validate_existence(
         return SH_ERR_STATE;
 
     }
-    
+
     *size = statbuf.st_size;
     if ( ( *size < PAGE_SIZE ) || ( *size % PAGE_SIZE != 0 ) ) {
 
@@ -346,7 +346,7 @@ static sh_status_e init_base_struct(
     int flags               // sharing flags
 
 )   {
-    
+
     // allocate base structure
     *base = calloc( 1, size );
     if ( *base == NULL ) {
@@ -514,8 +514,8 @@ extern sh_status_e create_base_object(
 
     }
 
-    status = create_extent( &(*base)->current, PAGE_SIZE >> SZ_SHIFT, (*base)->fd,
-                            (*base)->prot, (*base)->flags );
+    status = create_extent( &(*base)->current, PAGE_SIZE >> SZ_SHIFT,
+                            (*base)->fd, (*base)->prot, (*base)->flags );
     if ( status != SH_OK ) {
 
         free( *base );
@@ -644,7 +644,7 @@ static long calculate_realloc_size(
 )   {
 
     // divide by page size
-    long current_pages = extent->size >> 12;    
+    long current_pages = extent->size >> 12;
     long needed_pages = ( (slots << SZ_SHIFT) >> 12 ) + 1;
     return ( current_pages + needed_pages ) * PAGE_SIZE;
 }
@@ -1038,7 +1038,7 @@ extern view_s alloc_new_data(
     if ( view.status != SH_OK ) {
 
         return view;
-    
+
     }
 
     array = view.extent->array;
@@ -1527,7 +1527,7 @@ extern sh_status_e free_data_slots(
         // evaluate differences in keys
         long byte;
         uint8_t bits;
-        diff_key( (idx_leaf_s*) &base->current->array[ leaf ], 
+        diff_key( (idx_leaf_s*) &base->current->array[ leaf ],
                   (uint8_t*) &count, &byte, &bits );
         if ( bits == 0 ) {
 
@@ -1652,7 +1652,7 @@ static long walk_trie(
         array = view.extent->array;
         stack_push( stack, ref->next + 2 );
         stack_push( stack, ref->next );
-    
+
     }
 
     return 0;
@@ -1872,6 +1872,150 @@ extern void release_prev_extents(
         munmap( head->array, head->size );
         free( head );
         head = next;
+
+    }
+}
+
+
+extern sh_status_e perform_name_validations(
+
+    char const * const name,        // name string of shared memory file
+    size_t *size                    // pointer to size field -- possibly NULL
+
+)   {
+
+    sh_status_e status = validate_name( name );
+    if ( status ) {
+
+        return status;
+
+    }
+
+    return validate_existence( name, size );
+}
+
+
+extern sh_status_e release_mapped_memory(
+
+    shr_base_s **base       // address of base struct pointer-- not NULL
+
+)   {
+
+    if ( (*base)->current ) {
+
+        if ( (*base)->current->array ) {
+
+            munmap( (*base)->current->array, (*base)->current->size );
+
+        }
+
+        free( (*base)->current );
+
+    }
+
+    if ( (*base)->fd > 0 ) {
+
+        close( (*base)->fd );
+
+    }
+
+    if ( (*base)->name ) {
+
+        int rc = shm_unlink( (*base)->name );
+
+        if ( rc < 0 ) {
+
+            return SH_ERR_SYS;
+
+        }
+
+        free( (*base)->name );
+    }
+
+    return SH_OK;
+}
+
+
+extern sh_status_e map_shared_memory(
+
+    shr_base_s **base,          // address of base struct pointer-- not NULL
+    char const * const name,    // name as null terminated string -- not NULL
+    size_t size                 // size of shared memory
+
+) {
+    (*base)->name = strdup( name );
+    (*base)->prot = PROT_READ | PROT_WRITE;
+    (*base)->flags = MAP_SHARED;
+
+    (*base)->fd = shm_open( (*base)->name, O_RDWR, FILE_MODE );
+
+    if ( (*base)->fd < 0 ) {
+
+        free( *base );
+        *base = NULL;
+        return convert_to_status( errno );
+
+    }
+
+    while ( true ) {
+
+        (*base)->current->array = mmap( 0, size, (*base)->prot, (*base)->flags,
+                                        (*base)->fd, 0 );
+
+        if ( (*base)->current->array == (void*) -1 ) {
+
+            free( (*base)->current );
+            free( *base );
+            *base = NULL;
+            return convert_to_status( errno );
+
+        }
+
+        if ( size == (*base)->current->array[ SIZE ] << SZ_SHIFT ) {
+
+            break;
+
+        }
+
+        size_t alt_size = (*base)->current->array[ SIZE ] << SZ_SHIFT;
+        munmap( (*base)->current->array, size );
+        size = alt_size;
+
+    }
+
+    (*base)->current->size = size;
+    (*base)->current->slots = size >> SZ_SHIFT;
+    return SH_OK;
+}
+
+
+extern void close_base(
+
+    shr_base_s *base    // pointer to base struct -- not NULL
+
+)   {
+    release_prev_extents( base );
+
+    if ( base->current ) {
+
+        if ( base->current->array ) {
+
+            munmap(base->current->array, base->current->size);
+
+        }
+
+        free( base->current );
+    }
+
+    if ( base->fd > 0 ) {
+
+        close( base->fd );
+
+    }
+
+    if ( base->name ){
+
+        free(base->name);
 
     }
 }

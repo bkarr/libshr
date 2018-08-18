@@ -44,12 +44,10 @@ THE SOFTWARE.
 
 #ifdef __x86_64__
 
-#define DELTA UINT_MAX
 #define SHRQ "shrq"
 
 #else
 
-#define DELTA USHRT_MAX
 #define SHRQ "sq32"
 
 #endif
@@ -139,18 +137,18 @@ struct shr_q
 
 
 /*
-===============================================================================
+================================================================================
 
     private functions
 
-===============================================================================
+================================================================================
 */
 
 
 static sh_status_e format_as_queue(
 
     shr_q_s *q,             // pointer to queue struct -- not NULL
-    unsigned int max_depth, // max depth allowed at which add of item blocks
+    unsigned int max_depth, // max depth allowed at which add of an item blocks
     sq_mode_e mode          // read/write mode
 
 )   {
@@ -160,7 +158,7 @@ static sh_status_e format_as_queue(
     long *array = q->current->array;
 
     int rc = sem_init( (sem_t*)&array[ DEQ_SEM ], 1, 0 );
-    
+
     if ( rc < 0 ) {
 
         return SH_ERR_NOSUPPORT;
@@ -172,10 +170,10 @@ static sh_status_e format_as_queue(
         max_depth = SEM_VALUE_MAX;
 
     }
-    
+
     array[ MAX_DEPTH ] = max_depth;
     rc = sem_init( (sem_t*)&array[ ENQ_SEM ], 1, max_depth );
-    
+
     if ( rc < 0 ) {
 
         return SH_ERR_NOSUPPORT;
@@ -207,17 +205,17 @@ static inline long calc_data_slots(
     long length
 
 )   {
-    
+
     long space = DATA_HDR;
-    
+
     // calculate number of slots needed for data
     space += length >> SZ_SHIFT;
-    
-    // account for remainder    
+
+    // account for remainder
     if ( length & REM ) {
-    
+
         space += 1;
-    
+
     }
 
     return space;
@@ -225,18 +223,18 @@ static inline long calc_data_slots(
 
 
 static long copy_value(
-    
+
     shr_q_s *q,         // pointer to queue struct
     void *value,        // pointer to value data
     long length,        // length of data
     sh_type_e type      // data type
 
 )   {
-    
+
     if ( q == NULL || value == NULL || length <= 0 ) {
-    
+
         return 0;
-    
+
     }
 
     struct timespec curr_time;
@@ -255,7 +253,7 @@ static long copy_value(
         array[ current + VEC_CNT ] = 1;
         array[ current + DATA_LENGTH ] = length;
         memcpy( &array[ current + DATA_HDR ], value, length );
-    
+
     }
 
     return current;
@@ -277,14 +275,14 @@ static long calc_vector_slots(
         space += 2;
         // calculate number of slots needed for data
         space += (vector[i].len >> SZ_SHIFT);
-        
+
         // account for remainder
         if (vector[i].len & REM) {
-        
+
             space += 2;
-        
+
         }
-    
+
     }
 
     return space;
@@ -311,7 +309,7 @@ static long copy_vector(
     update_buffer_size( q->current->array, space, vcnt * sizeof(sq_vec_s) );
     view_s view = alloc_data_slots( (shr_base_s*)q, space );
     long current = view.slot;
-    
+
     if ( current >= HDR_END ) {
 
         long *array = view.extent->array;
@@ -322,22 +320,22 @@ static long copy_vector(
         array[ current + DATA_LENGTH ] = ( space - DATA_HDR ) << SZ_SHIFT;
         long slot = current;
         slot += DATA_HDR;
-    
+
         for ( int i = 0; i < vcnt; i++ ) {
 
-            if ( vector[i].type <= 0 || 
-                vector[i].len <= 0  || 
+            if ( vector[i].type <= 0 ||
+                vector[i].len <= 0  ||
                 vector[i].base == NULL ) {
 
                 return -1;
 
             }
-    
+
             array[ slot++ ] = vector[ i ].type;
             array[ slot++ ] = vector[ i ].len;
             memcpy( &array[ slot ], vector[ i ].base, vector[ i ].len );
             slot += vector[ i ].len >> SZ_SHIFT;
-    
+
             if ( vector[ i ].len & REM ) {
 
                 slot++;
@@ -355,23 +353,23 @@ static void signal_arrival(
     shr_q_s *q
 
 )   {
-    
+
     if ( q->current->array[ LISTEN_SIGNAL ] == 0 ||
          q->current->array[ LISTEN_PID ] == 0 ) {
 
         return;
 
     }
-    
+
     int sval = -1;
     (void)sem_getvalue( (sem_t*)&q->current->array[ DEQ_SEM ], &sval );
     union sigval sv = { .sival_int = sval };
 
     if ( sval == 0 ) {
 
-        (void)sigqueue(q->current->array[ LISTEN_PID ], 
+        (void)sigqueue(q->current->array[ LISTEN_PID ],
                        q->current->array[ LISTEN_SIGNAL ], sv);
-    
+
     }
 
 }
@@ -389,9 +387,9 @@ static void signal_event(
         return;
 
     }
-    
+
     union sigval sv = { 0 };
-    (void)sigqueue( q->current->array[ NOTIFY_PID ], 
+    (void)sigqueue( q->current->array[ NOTIFY_PID ],
                     q->current->array[ NOTIFY_SIGNAL ], sv );
 }
 
@@ -404,19 +402,19 @@ static void signal_call(
 
     if ( q->current->array[ CALL_PID ] == 0 ||
         q->current->array[ CALL_SIGNAL ] == 0 ) {
-        
+
         return;
-    
+
     }
-    
+
     union sigval sv = { 0 };
-    (void)sigqueue( q->current->array[ CALL_PID ], 
+    (void)sigqueue( q->current->array[ CALL_PID ],
                     q->current->array[ CALL_SIGNAL ], sv );
 }
 
 
 static inline bool is_monitored(
-    
+
     long *array
 
 )   {
@@ -426,7 +424,7 @@ static inline bool is_monitored(
 
 
 static inline bool is_call_monitored(
-    
+
     long *array
 
 )   {
@@ -507,7 +505,7 @@ static long get_event_flag(
 
             break;
         }
-    
+
     return 0;
 }
 
@@ -554,9 +552,9 @@ static bool add_event(
     if ( view.slot == 0 ) {
 
         return false;
-    
+
     }
-    
+
     array = view.extent->array;
     array[ view.slot + EVENT_OFFSET ] = event;
 
@@ -576,7 +574,7 @@ static void update_empty_timestamp(
     clock_gettime( CLOCK_REALTIME, &curr_time );
     struct timespec last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
     DWORD next = { .low = curr_time.tv_sec, .high = curr_time.tv_nsec };
-    
+
     while ( timespeccmp(&curr_time, &last, > ) ) {
 
         if ( DWCAS( (DWORD*) &array[ EMPTY_SEC ], (DWORD*) &last, next ) ) {
@@ -602,7 +600,7 @@ static void lifo_add(
 
     DWORD stack_before;
     DWORD stack_after;
-    
+
     do {
 
         array[ slot ] = array[ STACK_HEAD ];
@@ -624,16 +622,16 @@ static void post_process_enq(
 )   {
 
     long *array = q->current->array;
-    
+
     if ( count == 0 ) {
 
         // queue emptied
         update_empty_timestamp( array );
 
     }
-    
+
     bool need_signal = false;
-    
+
     if ( !( array[ FLAGS ] & FLAG_ACTIVATED ) ) {
 
         if ( set_flag( array, FLAG_ACTIVATED ) ) {
@@ -643,19 +641,19 @@ static void post_process_enq(
         }
 
     }
-    
+
     if ( count == 0 ) {
 
         need_signal |= add_event( q, SQ_EVNT_NONEMPTY );
 
     }
-    
+
     if ( count == array[ MAX_DEPTH ] - 1 ) {
 
         need_signal |= add_event( q, SQ_EVNT_LIMIT );
 
     }
-    
+
     if ( need_signal && is_monitored( array ) ) {
 
         signal_event( q );
@@ -689,19 +687,19 @@ static sh_status_e enq_data(
 )   {
 
     long *array = q->current->array;
-    DWORD curr_time = { .low = array[ data_slot + TM_SEC ], 
+    DWORD curr_time = { .low = array[ data_slot + TM_SEC ],
                         .high = array[ data_slot + TM_NSEC ] };
 
     // allocate queue node
     view_s view = alloc_idx_slots( (shr_base_s*) q );
-    
+
     if ( view.slot == 0 ) {
-        
+
         free_data_slots( (shr_base_s*) q, data_slot );
         return SH_ERR_NOMEM;
-    
+
     }
-    
+
     long node = view.slot;
     array = view.extent->array;
 
@@ -744,19 +742,19 @@ static sh_status_e enq(
 
     // allocate space and copy value
     long data_slot = copy_value( q, value, length, type );
-    
+
     if ( data_slot == 0 ) {
 
         return SH_ERR_NOMEM;
 
     }
-    
+
     if ( data_slot < HDR_END ) {
 
         return SH_ERR_STATE;
 
     }
-    
+
     return enq_data( q, data_slot );
 }
 
@@ -770,33 +768,33 @@ static sh_status_e enqv(
 )   {
 
     if ( q == NULL || vector == NULL || vcnt < 2 ) {
-    
+
         return SH_ERR_ARG;
-    
+
     }
-    
+
     long data_slot;
     // allocate space and copy vector
     data_slot = copy_vector( q, vector, vcnt );
-    
+
     if ( data_slot < 0 ) {
 
         return SH_ERR_ARG;
 
     }
-    
+
     if ( data_slot == 0 ) {
 
         return SH_ERR_NOMEM;
-    
+
     }
-    
+
     if ( data_slot < HDR_END ) {
-    
+
         return SH_ERR_STATE;
-    
+
     }
-    
+
     return enq_data( q, data_slot );
 }
 
@@ -809,38 +807,38 @@ static long next_item(
 )   {
 
     view_s view = insure_in_range( (shr_base_s*) q, slot );
-    
+
     if ( view.slot == 0 ) {
 
         return 0;
 
     }
-    
+
     long *array = view.extent->array;
     long next = array[ slot ];
-    
+
     if ( next == 0 ) {
 
         return 0;
-    
+
     }
-    
+
     view = insure_in_range( (shr_base_s*) q, next + VALUE_OFFSET );
-    
+
     if ( view.slot == 0 ) {
 
         return 0;
 
     }
-    
+
     array = view.extent->array;
-    
+
     if ( next < HDR_END ) {
 
         return 0;
 
     }
-    
+
     return array[next + VALUE_OFFSET];
 }
 
@@ -859,20 +857,20 @@ static bool item_exceeds_limit(
         return false;
 
     }
-    
+
     if ( timelimit->tv_sec == 0 && timelimit->tv_nsec == 0 ) {
 
         return false;
-    
+
     }
 
     view_s view = insure_in_range( (shr_base_s*) q, item_slot );
     if ( view.slot != item_slot ) {
-    
+
         return false;
-    
+
     }
-    
+
     long *array = view.extent->array;
     struct timespec diff = { 0, 0 };
     struct timespec *item = (struct timespec *) &array[ item_slot + TM_SEC ];
@@ -900,25 +898,25 @@ static bool item_exceeds_delay(
 
         struct timespec intrvl = { 0 };
         struct timespec last = *(struct timespec*) &array[ EMPTY_SEC ];
-        
+
         if ( last.tv_sec == 0 ) {
 
             return item_exceeds_limit(q, item_slot,
-                                      (struct timespec*) &array[ LIMIT_SEC ], 
+                                      (struct timespec*) &array[ LIMIT_SEC ],
                                       &current );
         }
 
         timespecsub( &current, (struct timespec*) &array[ LIMIT_SEC ], &intrvl );
-        
+
         if ( timespeccmp( &last, &intrvl, < ) ) {
 
             return item_exceeds_limit(q, item_slot,
-                                      (struct timespec*) &array[ TARGET_SEC ], 
+                                      (struct timespec*) &array[ TARGET_SEC ],
                                       &current );
         }
     }
 
-    return item_exceeds_limit( q, item_slot, 
+    return item_exceeds_limit( q, item_slot,
                                (struct timespec*) &array[ LIMIT_SEC ],
                                &current );
 }
@@ -932,13 +930,13 @@ static void clear_empty_timestamp(
 
     volatile struct timespec last =
         *(struct timespec * volatile) &array[ EMPTY_SEC ];
-    
+
     DWORD next = { .high = 0, .low = 0 };
-    
+
     while ( !DWCAS( (DWORD*) &array[ EMPTY_SEC ], (DWORD*) &last, next ) ) {
-    
+
         last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
-    
+
     }
 }
 
@@ -954,7 +952,7 @@ static sh_status_e resize_buffer(
 )   {
 
     long total = size + array[ data_slot + VEC_CNT ] * sizeof(sq_vec_s);
-    
+
     if ( *buffer && *buff_size < total ) {
 
         free( *buffer );
@@ -962,7 +960,7 @@ static sh_status_e resize_buffer(
         *buff_size = 0;
 
     }
-    
+
     if ( *buffer == NULL ) {
 
         *buffer = malloc( total );
@@ -972,7 +970,7 @@ static sh_status_e resize_buffer(
 
             *buff_size = 0;
             return SH_ERR_NOMEM;
-        
+
         }
     }
 
@@ -987,27 +985,27 @@ static void initialize_item_vector(
 )   {
 
     uint8_t *current = (uint8_t*) item->value;
-    
+
     for ( int i = 0; i < item->vcount; i++ ) {
-    
+
         item->vector[ i ].type = (sh_type_e) *(long*) current;
         current += sizeof(long);
         item->vector[ i ].len = *(long*) current;
         current += sizeof(long);
         item->vector[ i ].base = current;
-    
+
         if ( item->vector[ i ].len <= sizeof(long) ) {
-    
+
             current += sizeof(long);
-    
+
         } else {
-    
+
             current += ( item->vector[ i ].len >> SZ_SHIFT ) << SZ_SHIFT;
-    
+
             if ( item->vector[ i ].len & REM ) {
-    
+
                 current += sizeof(long);
-    
+
             }
         }
     }
@@ -1026,7 +1024,7 @@ static void copy_to_buffer(
 
     long size = ( array[ data_slot + DATA_SLOTS ] << SZ_SHIFT ) - sizeof(long);
     sh_status_e status = resize_buffer( array, data_slot, buffer, buff_size, size );
-    
+
     if ( status != SH_OK ) {
 
         item->status = SH_ERR_NOMEM;
@@ -1043,7 +1041,7 @@ static void copy_to_buffer(
     item->value = (uint8_t*) *buffer + ( ( DATA_HDR - 1 ) * sizeof(long) );
     item->vcount = array[ data_slot + VEC_CNT ];
     item->vector = (sq_vec_s*) ( (uint8_t*) *buffer + size );
-    
+
     if ( item->vcount == 1 ) {
 
         item->vector[ 0 ].type = (sh_type_e) array[ data_slot + TYPE ];
@@ -1081,10 +1079,10 @@ static long remove_top(
         before.low = (ulong) top;
 
         if ( DWCAS( (DWORD*) &array[ STACK_HEAD ], &before, after ) ) {
-        
+
             memset( (void*) &array[ top ], 0, 2 << SZ_SHIFT );
             return top;
-        
+
         }
     }
 
@@ -1105,19 +1103,19 @@ static long lifo_remove(
     view_s view = insure_in_range( (shr_base_s*) q, top );
     array = view.extent->array;
     long data_slot = array[ top + VALUE_OFFSET ];
-    
+
     if ( data_slot == 0 ) {
-    
+
         return 0;   // try again
-    
+
     }
 
     if ( remove_top( q, top, gen ) == 0) {
-    
+
         return 0;   // try again
-    
+
     }
-    
+
     // free queue node
     add_end( (shr_base_s*) q, top, FREE_TAIL );
     return data_slot;
@@ -1162,7 +1160,7 @@ static long fifo_remove(
 }
 
 
-static bool safely_copy_data( 
+static bool safely_copy_data(
 
     shr_q_s *q,         // pointer to queue
     long data_slot,     // array index of data
@@ -1215,7 +1213,7 @@ static void post_process_deq(
 
     }
 
-    bool expired = is_discard_on_expire( array ) && 
+    bool expired = is_discard_on_expire( array ) &&
                    item_exceeds_delay( q, data_slot, array );
     bool need_signal = false;
 
@@ -1247,7 +1245,7 @@ static void post_process_deq(
 
         free_data_slots( (shr_base_s*) q, data_slot );
         item->status = SH_OK;
-        
+
     }
 }
 
@@ -1274,9 +1272,9 @@ static sq_item_s deq(
 
                 release_prev_extents( (shr_base_s*) q );
                 return item;    // queue empty
-            
+
             }
-            
+
             data_slot = fifo_remove( q );
 
         } else {
@@ -1287,7 +1285,7 @@ static sq_item_s deq(
     }
 
     if ( safely_copy_data( q, data_slot, &item, buffer, buff_size ) ) {
-        
+
         post_process_deq( q, data_slot, &item );
 
     }
@@ -1308,19 +1306,19 @@ static sq_event_e next_event(
     if ( view.slot == 0 ) {
 
         return SQ_EVNT_NONE;
-    
+
     }
-    
+
     long *array = view.extent->array;
     long next = array[ slot ];
 
     view = insure_in_range( (shr_base_s*) q, next );
     if ( view.slot == 0 ) {
-    
+
         return SQ_EVNT_NONE;
-    
+
     }
-    
+
     array = view.extent->array;
     return array [ next + EVENT_OFFSET ];
 }
@@ -1350,109 +1348,42 @@ static void check_for_level_event(
     if ( array[ COUNT ] >= level && add_event( q, SQ_EVNT_LEVEL ) ) {
 
         signal_event( q );
-    
+
     }
 
     return;
-}
-
-static sh_status_e perform_name_validations(
-
-    char const * const name,        // name string of shared memory file
-    size_t *size                    // pointer to size field -- possibly NULL
-
-)   {
-
-    sh_status_e status = validate_name( name );
-    if ( status ) {
-
-        return status;
-    
-    }
-
-    return validate_existence( name, size );
 }
 
 
 static sh_status_e initialize_q_struct(
 
     shr_q_s **q,            // address of q struct pointer -- not NULL
-    char const * const name,// name of q as a null terminated string -- not NULL
     sq_mode_e mode          // read/write mode
 
 ) {
 
     *q = calloc( 1, sizeof(shr_q_s) );
     if ( *q == NULL ) {
-    
+
         return SH_ERR_NOMEM;
-    
+
     }
-    
+
     (*q)->current = calloc( 1, sizeof(extent_s) );
     if ( (*q)->current == NULL ) {
-    
+
         free( *q );
         *q = NULL;
         return SH_ERR_NOMEM;
-    
+
     }
 
     (*q)->prev = (*q)->current;
-    (*q)->name = strdup( name );
     (*q)->mode = mode;
-    (*q)->prot = PROT_READ | PROT_WRITE;
-    (*q)->flags = MAP_SHARED;
 
-    (*q)->fd = shm_open( name, O_RDWR, FILE_MODE );
-
-    if ( (*q)->fd < 0 ) {
-
-        free( *q );
-        *q = NULL;
-        return convert_to_status( errno );
-
-    }
     return SH_OK;
 }
 
-
-static sh_status_e map_queue_memory(
-
-    shr_q_s **q,            // address of q struct pointer -- not NULL
-    size_t size             // size of shared memory
-
-) {
-
-    while ( true ) {
-
-        (*q)->current->array = mmap( 0, size, (*q)->prot, (*q)->flags, (*q)->fd, 0 );
-        
-        if ( (*q)->current->array == (void*) -1 ) {
-        
-            free( (*q)->current );
-            free( *q );
-            *q = NULL;
-            return convert_to_status( errno );
-        
-        }
-        
-        if ( size == (*q)->current->array[ SIZE ] << SZ_SHIFT ) {
-        
-            break;
-        
-        }
-        
-        size_t alt_size = (*q)->current->array[ SIZE ] << SZ_SHIFT;
-        munmap( (*q)->current->array, size );
-        size = alt_size;
-    
-    }
-    
-    (*q)->current->size = size;
-    (*q)->current->slots = size >> SZ_SHIFT;
-    return SH_OK;
-}
 
 
 static bool is_valid_queue(
@@ -1462,15 +1393,15 @@ static bool is_valid_queue(
 )   {
 
     if ( memcmp( &q->current->array[ TAG ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
-    
+
         return false;
-    
+
     }
-    
+
     if ( q->current->array[ VERSION ] != QVERSION ) {
-    
+
         return false;
-    
+
     }
 
     return true;
@@ -1487,55 +1418,16 @@ static sh_status_e release_semaphores(
     if ( rc < 0 ) {
 
         return SH_ERR_SYS;
-    
+
     }
-    
+
     rc = sem_destroy( (sem_t*) &(*q)->current->array[ ENQ_SEM ] );
     if ( rc < 0 ) {
-    
+
         return SH_ERR_SYS;
-    
-    }
-    
-    return SH_OK;
-}
 
-
-static sh_status_e release_mapped_queue_memory(
-
-    shr_q_s **q         // address of q struct pointer -- not NULL
-
-)   {
-
-    if ( (*q)->current ) {
-    
-        if ( (*q)->current->array ) {
-    
-            munmap( (*q)->current->array, (*q)->current->size );
-    
-        }
-    
-        free( (*q)->current );
-    
     }
 
-    if ( (*q)->fd > 0 ) {
-    
-        close( (*q)->fd );
-    
-    }
-
-    if ( (*q)->name ) {
-        
-        int rc = shm_unlink( (*q)->name );
-        if ( rc < 0 ) {
-        
-            return SH_ERR_SYS;
-        
-        }
-        
-        free( (*q)->name );
-    }
     return SH_OK;
 }
 
@@ -1547,23 +1439,23 @@ static sh_status_e deq_gate_try(
 )   {
 
     while ( sem_trywait( (sem_t*) &q->current->array[ DEQ_SEM ] ) < 0 ) {
-    
+
         if ( errno == EAGAIN ) {
-    
+
             if ( is_call_monitored( q->current->array ) ) {
-    
+
                 signal_call( q );
-    
+
             }
-    
+
             return SH_ERR_EMPTY;
-    
+
         }
-    
+
         if ( errno == EINVAL ) {
-    
+
             return SH_ERR_STATE;
-    
+
         }
     }
 
@@ -1576,23 +1468,23 @@ static sh_status_e deq_gate_blk(
     shr_q_s *q          // pointer to queue
 
 )   {
-    
+
     (void) AFA( &q->current->array[CALL_BLOCKS], 1 );
-    
+
     if ( is_call_monitored( q->current->array ) ) {
         signal_call( q );
     }
-    
+
     while ( sem_wait( (sem_t*) &q->current->array[ DEQ_SEM ] ) < 0 ) {
-        
+
         if ( errno == EINVAL ) {
-        
+
             (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     (void) AFA( &q->current->array[CALL_UNBLOCKS], 1 );
     return SH_OK;
 }
@@ -1604,36 +1496,36 @@ static sh_status_e deq_gate_tm(
     struct timespec *timeout    // timeout value -- not NULL
 
 )   {
-    
+
     (void) AFA( &q->current->array[ CALL_BLOCKS ], 1 );
-    
+
     if ( is_call_monitored( q->current->array ) ) {
-        
+
         signal_call( q );
-    
+
     }
 
     struct timespec ts;
     clock_gettime( CLOCK_REALTIME, &ts );
     timespecadd( &ts, timeout, &ts );
-    
+
     while ( sem_timedwait( (sem_t*) &q->current->array[ DEQ_SEM ], &ts ) < 0 ) {
-        
+
         if ( errno == ETIMEDOUT ) {
-        
+
             (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_EMPTY;
-        
+
         }
-        
+
         if ( errno == EINVAL ) {
-        
+
             (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
     return SH_OK;
 }
@@ -1644,22 +1536,22 @@ static sh_status_e enq_gate_try(
     shr_q_s *q          // pointer to queue
 
 )   {
-    
+
     while ( sem_trywait( (sem_t*) &q->current->array[ ENQ_SEM ] ) < 0 ) {
-        
+
         if ( errno == EAGAIN ) {
 
             return SH_ERR_LIMIT;
-        
+
         }
 
         if ( errno == EINVAL ) {
-        
+
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     return SH_OK;
 }
 
@@ -1669,7 +1561,7 @@ static sh_status_e enq_gate_blk(
     shr_q_s *q          // pointer to queue
 
 )   {
-    
+
     while ( sem_wait( (sem_t*) &q->current->array[ ENQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
@@ -1678,7 +1570,7 @@ static sh_status_e enq_gate_blk(
 
         }
     }
-    
+
     return SH_OK;
 }
 
@@ -1689,27 +1581,27 @@ static sh_status_e enq_gate_tm(
     struct timespec *timeout    // timeout value -- not NULL
 
 )   {
-    
+
     long *array = q->current->array;
     struct timespec ts;
     clock_gettime( CLOCK_REALTIME, &ts );
     timespecadd( &ts, timeout, &ts );
-    
+
     while ( sem_timedwait( (sem_t*) &array[ ENQ_SEM ], &ts ) < 0 ) {
-        
+
         if ( errno == ETIMEDOUT ) {
-        
+
             return SH_ERR_LIMIT;
-        
+
         }
-        
+
         if ( errno == EINVAL ) {
 
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     return SH_OK;
 }
 
@@ -1721,14 +1613,14 @@ static sh_status_e deq_release_gate(
 )   {
 
     while ( sem_post( (sem_t*) &q->current->array[ DEQ_SEM ]) < 0 ) {
-        
+
         if ( errno == EINVAL ) {
 
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     return SH_OK;
 }
 
@@ -1744,10 +1636,10 @@ static sh_status_e enq_release_gate(
         if ( errno == EINVAL ) {
 
             return SH_ERR_STATE;
-        
+
         }
     }
-    
+
     return SH_OK;
 }
 
@@ -1771,11 +1663,11 @@ static inline void unguard_q_memory(
 
 
 /*
-===============================================================================
+================================================================================
 
     public function interface
 
-===============================================================================
+================================================================================
 */
 
 
@@ -1802,6 +1694,7 @@ static inline void unguard_q_memory(
                     zero, or if no queue name
     SH_ERR_ACCESS   on permissions error for queue name
     SH_ERR_EXIST    if queue already exists
+    SH_ERR_NOMEM    if not enough memory to allocate
     SH_ERR_PATH     if error in queue name
     SH_ERR_SYS      if system call returns an error
 */
@@ -1814,9 +1707,7 @@ extern sh_status_e shr_q_create(
 
 )   {
 
-    if ( q == NULL ||
-         name == NULL ||
-         max_depth > SEM_VALUE_MAX ) {
+    if ( q == NULL || name == NULL || max_depth > SEM_VALUE_MAX ) {
 
         return SH_ERR_ARG;
 
@@ -1894,15 +1785,14 @@ extern sh_status_e shr_q_open(
 
     }
 
-    status = initialize_q_struct( q, name, mode );
+    status = initialize_q_struct( q, mode );
     if ( status ) {
 
         return status;
 
     }
 
-
-    status = map_queue_memory( q, size );
+    status = map_shared_memory( (shr_base_s**) q, name, size );
     if ( status ) {
 
         return status;
@@ -1943,29 +1833,7 @@ extern sh_status_e shr_q_close(
 
     }
 
-    release_prev_extents( (shr_base_s*) *q );
-
-    if ( (*q)->current ) {
-
-        if ( (*q)->current->array ) {
-
-            munmap( (*q)->current->array, (*q)->current->size );
-
-        }
-
-        free( (*q)->current );
-    }
-
-    if ( (*q)->fd > 0 ) {
-
-        close( (*q)->fd );
-
-    }
-
-    if ( (*q)->name ) {
-
-        free( (*q)->name );
-    }
+    close_base( (shr_base_s*) *q );
 
     free( *q );
     *q = NULL;
@@ -2010,7 +1878,7 @@ extern sh_status_e shr_q_destroy(
 
     }
 
-    status = release_mapped_queue_memory( q );
+    status = release_mapped_memory( (shr_base_s**) q );
 
     free( *q );
     *q = NULL;
@@ -2020,12 +1888,12 @@ extern sh_status_e shr_q_destroy(
 
 
 /*
-    shr_q_monitor -- registers calling process for notification using signals 
+    shr_q_monitor -- registers calling process for notification using signals
                      when events occur on shared queue
 
-    Any non-zero signal value registers calling process for notification using 
-    the specified signal when an queue event occurs.  A signal value of zero 
-    unregisters the process if it is currently registered.  Only a single 
+    Any non-zero signal value registers calling process for notification using
+    the specified signal when an queue event occurs.  A signal value of zero
+    unregisters the process if it is currently registered.  Only a single
     process can be registered for event notifications.
 
     returns sh_status_e:
@@ -2056,7 +1924,7 @@ extern sh_status_e shr_q_monitor(
     if ( signal == 0 ) {
 
         pid = 0;
-    
+
     }
 
 
@@ -2065,7 +1933,7 @@ extern sh_status_e shr_q_monitor(
         q->current->array[ NOTIFY_SIGNAL ] = signal;
         unguard_q_memory( q );
         return SH_OK;
-    
+
     }
 
     unguard_q_memory( q );
@@ -2106,19 +1974,19 @@ extern sh_status_e shr_q_listen(
 
     long pid = getpid();
     long prev = q->current->array[ LISTEN_PID ];
-    
+
     if ( signal == 0 ) {
-    
+
         pid = 0;
-    
+
     }
 
     if ( CAS( &q->current->array[ LISTEN_PID ], &prev, pid ) ) {
-    
+
         q->current->array[ LISTEN_SIGNAL ] = signal;
         unguard_q_memory( q );
         return SH_OK;
-    
+
     }
 
     unguard_q_memory( q );
@@ -2159,7 +2027,7 @@ extern sh_status_e shr_q_call(
 
     long pid = getpid();
     long prev = q->current->array[ CALL_PID ];
-    
+
     if ( signal == 0 ) {
 
         pid = 0;
@@ -2220,7 +2088,7 @@ extern sh_status_e shr_q_add(
 
         unguard_q_memory( q );
         return status;
-    
+
     }
 
     status = enq( q, value, length, SH_STRM_T );
@@ -2656,13 +2524,13 @@ extern sq_item_s shr_q_remove(
          ( *buffer != NULL && *buff_size <= 0 ) ) {
 
         return (sq_item_s) { .status = SH_ERR_ARG };
-    
+
     }
 
     if ( !( q->mode & SQ_READ_ONLY ) ) {
-    
+
         return (sq_item_s) { .status = SH_ERR_STATE };
-    
+
     }
 
     sq_item_s item = { 0 };
@@ -3016,7 +2884,7 @@ extern long shr_q_count(
 
     long result = -1;
     result = q->current->array[ COUNT ];
-    
+
     unguard_q_memory( q );
     return result;
 }
@@ -3042,7 +2910,7 @@ extern size_t shr_q_buffer(
 
     long result = -1;
     result = q->current->array[ BUFFER ];
-    
+
     unguard_q_memory( q );
     return result;
 }
@@ -3076,7 +2944,7 @@ extern sh_status_e shr_q_level(
     extent_s *extent = q->current;
     long *array = extent->array;
     long prev = array[ LEVEL ];
-    
+
     CAS( &array[ LEVEL ], &prev, level );
 
     unguard_q_memory( q );
@@ -3178,7 +3046,7 @@ extern sh_status_e shr_q_clean(
 
             unguard_q_memory( q );
             return status;
-        } 
+        }
 
         long *array = q->current->array;
         long gen = array[ HEAD_CNT ];
@@ -3342,9 +3210,9 @@ extern bool shr_q_will_discard(
     }
 
     guard_q_memory( q );
-    
+
     bool result = is_discard_on_expire( q->current->array );
-    
+
     unguard_q_memory( q );
     return result;
 }
@@ -3411,9 +3279,9 @@ extern bool shr_q_will_lifo(
     }
 
     guard_q_memory( q );
-    
+
     bool result = is_adaptive_lifo( q->current->array );
-    
+
     unguard_q_memory( q );
     return result;
 }
@@ -3517,7 +3385,7 @@ extern bool shr_q_is_subscribed(
     guard_q_memory( q );
 
     bool result = !event_disabled( q->current->array, event );
-    
+
     unguard_q_memory( q );
     return result;
 }
@@ -3573,11 +3441,11 @@ extern long shr_q_call_count(
 )   {
 
     if ( q == NULL ) {
-    
+
         return -1;
-    
+
     }
-    
+
     guard_q_memory( q );
 
     long unblocks = q->current->array[ CALL_UNBLOCKS ];
