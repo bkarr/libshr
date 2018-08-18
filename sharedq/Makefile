@@ -8,6 +8,9 @@ LIB = -L../lib -l:libshr.a -lrt -lpthread
 
 all: all64
 
+rh7: CFLAGS = -I../include -g3 -O1 -std=gnu99 -Wall -o $(EXE)
+rh7: main
+
 all64: CFLAGS = -I../include -g3 -O1 -std=gnu11 -pedantic -Wall -o $(EXE)
 all64: main
 

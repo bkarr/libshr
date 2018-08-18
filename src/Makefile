@@ -15,6 +15,9 @@ LIB = -lrt -lpthread
 
 all: all64
 
+rh7: CFLAGS = -I../include -g3 -fPIC -std=gnu99 -Wall
+rh7: all64
+
 all64: CFLAGS += -mcx16 -c -O3
 all64: shared shared_int shared_q
 
@@ -58,7 +61,7 @@ checkshr64: shared64
 	@cd test && $(MAKE) checkshr64 && cd ..
 
 check32: CFLAGS += -m32 -D__STDC_NO_ATOMICS_ -DTESTMAIN -O0
-check32: clean shared32 checkq32 
+check32: clean shared32 checkq32
 #	@for name in $(TESTS); do echo ./$$name; ./$$name; done
 
 shared32: CFLAGS += -m32 -c -O0
