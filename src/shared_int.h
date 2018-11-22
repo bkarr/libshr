@@ -68,8 +68,8 @@ enum shr_base_disp
 typedef unsigned long ulong;
 
 typedef struct {
-    ulong low;
-    ulong high;
+    atomictype low;
+    atomictype high;
 } DWORD;
 
 /*
@@ -143,9 +143,9 @@ typedef struct shr_base
     which is PIC register, so using builtins to be safe
 */
 static inline char CAS(
-    volatile long *mem,
-    volatile long *old,
-    long new
+    atomic_type *mem,
+    atomic_type *old,
+    atomic_type new
 )   {
     return __sync_bool_compare_and_swap((long*)mem, *(long*)old, new);
 }
@@ -198,9 +198,12 @@ static inline char DWCAS(
 
 #else
 
-#define AFS(mem, v) atomic_fetch_sub_explicit(mem, v, memory_order_relaxed)
-#define AFA(mem, v) atomic_fetch_add_explicit(mem, v, memory_order_relaxed)
-#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new,\
+#define AFS(mem, v) atomic_fetch_sub_explicit((atomictype *)mem, v, \
+                                              memory_order_relaxed)
+#define AFA(mem, v) atomic_fetch_add_explicit((atomictype *)mem, v, \
+                                              memory_order_relaxed)
+#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(   \
+            (atomic_long*)val, (atomic_long*)old, (atomic_long)new, \
             memory_order_relaxed, memory_order_relaxed)
 #define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, \
               new, memory_order_relaxed, memory_order_relaxed)
