@@ -73,13 +73,22 @@ enum shr_q_constants
     NODE_SIZE = 4,          // node slot count
     EVENT_OFFSET = 2,       // offset in node for event for queued item
     VALUE_OFFSET = 3,       // offset in node for data slot for queued item
-    DATA_HDR = 6,           // data header
+
+};
+
+
+// define data header layout offsets
+enum shr_q_data
+{
+
     DATA_SLOTS = 0,         // total data slots (including header)
-    TM_SEC = 1,             // offset for data timestamp seconds value
-    TM_NSEC = 2,            // offset for data timestamp nanoseconds value
-    TYPE = 3,               // offset of type indicator
-    VEC_CNT = 4,            // offset for vector count
-    DATA_LENGTH = 5,        // offset for data length
+    TM_SEC,                 // offset for data timestamp seconds value
+    TM_NSEC,                // offset for data timestamp nanoseconds value
+    UID,                    // offset of unique id
+    TYPE,                   // offset of type indicator
+    VEC_CNT,                // offset for vector count
+    DATA_LENGTH,            // offset for data length
+    DATA_HDR,               // data header length
 
 };
 
@@ -104,12 +113,12 @@ enum shr_q_disp
     EMPTY_NSEC,                     // time q last empty in nanoseconds
     LIMIT_SEC,                      // time limit interval in seconds
     LIMIT_NSEC,                     // time limit interval in nanoseconds
-    NOTIFY_PID,                     // event notification process id
-    NOTIFY_SIGNAL,                  // event notification signal
     DEQ_SEM,                        // deq semaphore
     ENQ_SEM = (DEQ_SEM + 4),        // enq semaphore
     CALL_PID = (ENQ_SEM +4),        // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
+    NOTIFY_PID,                     // event notification process id
+    NOTIFY_SIGNAL,                  // event notification signal
     CALL_BLOCKS,                    // count of blocked remove calls
     CALL_UNBLOCKS,                  // count of unblocked remove calls
     TARGET_SEC,                     // target CoDel delay in seconds
@@ -118,8 +127,11 @@ enum shr_q_disp
     STACK_HD_CNT,                   // head of stack counter
     LEVEL,                          // queue depth event level
     MAX_DEPTH,                      // queue max depth limit
-    AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 18),         // end of queue header
+    ITEM_ID,                        // unique item id for trace
+    EVNT_SEM,                       // event semaphore
+    TRC_SEM = (EVNT_SEM +4),        // trace semaphore
+    AVAIL = (TRC_SEM + 4),          // next avail free slot
+    HDR_END = (AVAIL + 9),         // end of queue header
 
 };
 
@@ -173,6 +185,22 @@ static sh_status_e format_as_queue(
 
     array[ MAX_DEPTH ] = max_depth;
     rc = sem_init( (sem_t*)&array[ ENQ_SEM ], 1, max_depth );
+
+    if ( rc < 0 ) {
+
+        return SH_ERR_NOSUPPORT;
+
+    }
+
+    rc = sem_init( (sem_t*)&array[ EVNT_SEM ], 1, 0 );
+
+    if ( rc < 0 ) {
+
+        return SH_ERR_NOSUPPORT;
+
+    }
+
+    rc = sem_init( (sem_t*)&array[ TRC_SEM ], 1, 0 );
 
     if ( rc < 0 ) {
 
@@ -249,6 +277,7 @@ static long copy_value(
         long *array = view.extent->array;
         array[ current + TM_SEC ] = curr_time.tv_sec;
         array[ current + TM_NSEC ] = curr_time.tv_nsec;
+        array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
         array[ current + TYPE ] = type;
         array[ current + VEC_CNT ] = 1;
         array[ current + DATA_LENGTH ] = length;
@@ -560,6 +589,10 @@ static bool add_event(
 
     // append node to end of queue
     add_end( (shr_base_s*)q, view.slot, EVENT_TAIL );
+
+    // release read of event
+    sem_post( (sem_t*) &array[ EVNT_SEM ] );
+
     return true;
 }
 
@@ -1205,7 +1238,7 @@ static void post_process_deq(
 
     view_s view = { .extent = q->current };
     long *array = view.extent->array;
-    long count = AFS(&array[ COUNT ], 1 );
+    long count = AFS( (atomictype*)&array[ COUNT ], 1 );
 
     if ( is_codel_active( array ) && count == 1 ) {
 
@@ -1422,6 +1455,20 @@ static sh_status_e release_semaphores(
     }
 
     rc = sem_destroy( (sem_t*) &(*q)->current->array[ ENQ_SEM ] );
+    if ( rc < 0 ) {
+
+        return SH_ERR_SYS;
+
+    }
+
+    rc = sem_destroy( (sem_t*) &(*q)->current->array[ EVNT_SEM ] );
+    if ( rc < 0 ) {
+
+        return SH_ERR_SYS;
+
+    }
+
+    rc = sem_destroy( (sem_t*) &(*q)->current->array[ TRC_SEM ] );
     if ( rc < 0 ) {
 
         return SH_ERR_SYS;
@@ -2742,7 +2789,8 @@ extern sq_item_s shr_q_remove_timedwait(
 
 
 /*
-    shr_q_event -- returns active event or SQ_EVNT_NONE when empty
+    shr_q_event -- returns active event or SQ_EVNT_NONE when either empty or
+    error condition
 
 */
 extern sq_event_e shr_q_event(
@@ -2763,6 +2811,13 @@ extern sq_event_e shr_q_event(
     long *array = extent->array;
     sq_event_e event = SQ_EVNT_NONE;
 
+    if ( sem_trywait( (sem_t*) &array[ EVNT_SEM ] ) < 0 ) {
+
+        unguard_q_memory( q );
+        return event;
+
+    }
+
     long gen = array[ EVENT_HD_CNT ];
     long head = array[ EVENT_HEAD ];
 
@@ -2770,7 +2825,74 @@ extern sq_event_e shr_q_event(
 
         event = next_event( q, head );
 
-        if ( remove_front( (shr_base_s*) q, head, gen, EVENT_HEAD, EVENT_TAIL ) != 0 ) {
+        if ( remove_front( (shr_base_s*) q, head, gen, EVENT_HEAD, EVENT_TAIL )
+             != 0 ) {
+
+            // free queue node
+            add_end( (shr_base_s*) q, head, FREE_TAIL );
+            break;
+
+        }
+
+        gen = array[ EVENT_HD_CNT ];
+        head = array[ EVENT_HEAD ];
+    }
+
+    release_prev_extents( (shr_base_s*) q );
+
+    unguard_q_memory( q );
+    return event;
+}
+
+
+/*
+    shr_q_event_timedwait -- attempts for specified amount of time to return
+    active event or SQ_EVNT_NONE when empty, timed out, or error condition
+
+*/
+extern sq_event_e shr_q_event_timedwait(
+
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timeout    // timeout value -- not NULL
+
+)   {
+    if ( q == NULL ) {
+
+        return SQ_EVNT_NONE;
+
+    }
+
+    guard_q_memory( q );
+
+    extent_s *extent = q->current;
+    long *array = extent->array;
+    sq_event_e event = SQ_EVNT_NONE;
+
+    struct timespec ts;
+    clock_gettime( CLOCK_REALTIME, &ts );
+    timespecadd( &ts, timeout, &ts );
+
+    while ( sem_timedwait( (sem_t*) &q->current->array[ EVNT_SEM ], &ts ) < 0 ) {
+
+        if ( errno == ETIMEDOUT  || errno == EINVAL ) {
+
+            unguard_q_memory( q );
+            return event;
+
+        }
+
+    }
+
+
+    long gen = array[ EVENT_HD_CNT ];
+    long head = array[ EVENT_HEAD ];
+
+    while ( head != array[ EVENT_TAIL ] ) {
+
+        event = next_event( q, head );
+
+        if ( remove_front( (shr_base_s*) q, head, gen, EVENT_HEAD, EVENT_TAIL )
+             != 0 ) {
 
             // free queue node
             add_end( (shr_base_s*) q, head, FREE_TAIL );

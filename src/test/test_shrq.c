@@ -837,6 +837,59 @@ static void test_single_item_queue(void)
     assert(q == NULL);
 }
 
+static void test_event_timedwait(void)
+{
+    sh_status_e status;
+    sq_item_s item = {0};
+    shr_q_s *q = NULL;
+
+    adds = 0;
+    events = 0;
+    shm_unlink("testq");
+    status = shr_q_create(&q, "testq", 1, SQ_READWRITE);
+    assert(status == SH_OK);
+    assert(q != NULL);
+    assert(shr_q_subscribe(q, SQ_EVNT_ALL) == SH_OK);
+    assert(shr_q_add(q, "test", 4) == SH_OK);
+    assert(shr_q_count(q) == 1);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_INIT);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_NONEMPTY);
+    assert(shr_q_subscribe(q, SQ_EVNT_NONEMPTY) == SH_OK);
+    assert(shr_q_add(q, "test", 4) == SH_ERR_LIMIT);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_LIMIT);
+    assert(shr_q_subscribe(q, SQ_EVNT_LIMIT) == SH_OK);
+    assert(shr_q_count(q) == 1);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 4);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_EMPTY);
+    assert(shr_q_subscribe(q, SQ_EVNT_EMPTY) == SH_OK);
+    assert(shr_q_add(q, "test1", 5) == SH_OK);
+    assert(shr_q_count(q) == 1);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_NONEMPTY);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_LIMIT);
+    item = shr_q_remove(q, &item.buffer, &item.buf_size);
+    assert(item.status == SH_OK);
+    assert(item.buffer != NULL);
+    assert(item.buf_size > 0);
+    assert(item.length == 5);
+    assert(item.value != NULL);
+    assert(memcmp(item.value, "test1", item.length) == 0);
+    assert(shr_q_count(q) == 0);
+    assert(shr_q_event_timedwait(q, &(struct timespec){0, 10000000}) == SQ_EVNT_EMPTY);
+    free(item.buffer);
+    assert(events == 0);
+    assert(adds == 0);
+    status = shr_q_destroy(&q);
+    assert(status == SH_OK);
+    assert(q == NULL);
+}
+
 static void test_multi_item_queue(void)
 {
     sh_status_e status;
@@ -1289,6 +1342,7 @@ int main(void)
     test_expiration_discard();
     test_codel_algorithm();
     test_adaptive_lifo();
+    test_event_timedwait();
 
     return 0;
 }

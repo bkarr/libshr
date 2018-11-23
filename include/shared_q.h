@@ -19,9 +19,12 @@ typedef enum
     SQ_EVNT_INIT,           // first item added to queue
     SQ_EVNT_LIMIT,          // queue limit reached
     SQ_EVNT_TIME,           // max time limit reached
-    SQ_EVNT_LEVEL,          // depth level reached 
+    SQ_EVNT_LEVEL,          // depth level reached
     SQ_EVNT_EMPTY,          // last item on queue removed
-    SQ_EVNT_NONEMPTY        // item added to empty queue
+    SQ_EVNT_NONEMPTY,       // item added to empty queue
+    SQ_EVNT_ADD,            // trace event of item add
+    SQ_EVNT_REMOVE,         // trace event of item remove
+    SQ_EVNT_EXPIRE          // trace event of item expiring off queue
 } sq_event_e;
 
 typedef enum
@@ -56,7 +59,21 @@ typedef struct  sq_item
     size_t buf_size;            // size of buffer
     int vcount;                 // vector count
     sq_vec_s *vector;           // array of vectors
+    long id;                    // assigned unique id
 } sq_item_s;
+
+typedef struct  sq_trace
+{
+    sh_status_e status;         // returned status
+    sq_event_e event;           // trace event (add, remove, or expire)
+    char *name;                 // name of queue
+    struct timespec timestamp;  // timestamp of add to queue
+    long id;                    // unique item id
+    long length;                // length of data
+    sh_type_e type;             // data type
+    int vcount;                 // vector count
+    int pid;                    // process id that performed the action
+} sq_trace_s;
 
 /*==============================================================================
 
@@ -176,6 +193,23 @@ extern sq_item_s shr_q_remove_timedwait(
 
 extern sq_event_e shr_q_event(
     shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+extern sq_event_e shr_q_event_timedwait(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timeout    // timeout value -- not NULL
+);
+
+
+extern sq_trace_s *shr_q_trace(
+    shr_q_s *q                  // pointer to queue struct -- not NULL
+);
+
+
+extern sq_trace_s *shr_q_trace_timedwait(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timeout    // timeout value -- not NULL
 );
 
 
