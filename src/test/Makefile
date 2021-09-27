@@ -11,7 +11,7 @@ TESTSHR = test_shared
 TESTQ = test_shrq
 TESTMAP = test_shrmap
 TESTS = $(TESTINT) $(TESTSHR) $(TESTQ) $(TESTMAP)
-LIB = -lrt -lpthread
+LIB = -lrt -lpthread -latomic
 
 check: checkshr64 checkint64 checkq64
 

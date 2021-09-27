@@ -4,7 +4,7 @@ SHELL = /bin/sh
 
 CC = gcc
 EXE = shrq_harness
-LIB = -L../lib -l:libshr.a -lrt -lpthread
+LIB = -L../lib -l:libshr.a -lrt -lpthread -latomic
 
 all: all64
 
