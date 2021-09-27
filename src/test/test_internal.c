@@ -74,7 +74,7 @@ static void test_creation(void)
     assert(create_base_object(&base, sizeof(shr_base_s), "basetest", "test", 4, 1) == SH_OK);
     assert(base != NULL);
     assert(validate_existence("basetest", &size) == SH_OK);
-    assert(size = PAGE_SIZE);
+    assert(size == PAGE_SIZE);
     assert(base->current != NULL);
     assert(base->prev == base->current);
     assert(base->current->array != NULL);
@@ -94,7 +94,7 @@ void test_expansion(void)
     shm_unlink("basetest");
     assert(create_base_object(&base, sizeof(shr_base_s), "basetest", "test", 4, 1) == SH_OK);
     assert(validate_existence("basetest", &size) == SH_OK);
-    assert(size = PAGE_SIZE);
+    assert(size == PAGE_SIZE);
     view_s view = expand(base, base->current, 1000);
     assert(view.status == SH_OK);
     assert(validate_existence("basetest", &size) == SH_OK);
