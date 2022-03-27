@@ -3,7 +3,7 @@ SHELL = /bin/bash
 .SECONDARY:
 
 CC = gcc
-CFLAGS = -I../include -g3 -fPIC -std=gnu11 -pedantic -Wall
+CFLAGS = -I../include -g3 -fPIC -std=gnu99 -pedantic -Wall
 OBJECTS = shared.o shared_q.o shared_map.o shared_int.o
 TESTDIRS = test
 TESTINT = test_internal
