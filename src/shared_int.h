@@ -130,7 +130,7 @@ typedef struct shr_base
 
 
 
-#if (__STDC_VERSION__ < 201112L)
+#if ((__STDC_VERSION__ < 201112L) || __STDC_NO_ATOMICS__)
 
 #define AFS(mem, v) __sync_fetch_and_sub(mem, v)
 #define AFA(mem, v) __sync_fetch_and_add(mem, v)

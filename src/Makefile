@@ -3,7 +3,7 @@ SHELL = /bin/bash
 .SECONDARY:
 
 CC = gcc
-CFLAGS = -I../include -g3 -fPIC -std=gnu99 -pedantic -Wall
+CFLAGS = -I../include -g3 -fPIC -std=gnu11 -pedantic -Wall
 OBJECTS = shared.o shared_q.o shared_map.o shared_int.o
 TESTDIRS = test
 TESTINT = test_internal
@@ -18,10 +18,10 @@ all: all64
 rh7: CFLAGS = -I../include -g3 -fPIC -std=gnu99 -Wall
 rh7: all64
 
-all64: CFLAGS += -mcx16 -c -O3
+all64: CFLAGS += -mcx16 -c -O3 -D__STDC_NO_ATOMICS__
 all64: shared shared_int shared_q
 
-all32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS_ -O1
+all32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O1
 all32: shared shared_int shared_q shared_map
 
 debug: debug64
@@ -29,7 +29,7 @@ debug: debug64
 debug64: CFLAGS += -mcx16 -c -O0
 debug64: shared shared_int shared_q shared_map
 
-debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS_ -O0
+debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O0
 debug32: shared shared_int shared_q shared_map
 
 check: all64
