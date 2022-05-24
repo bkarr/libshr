@@ -179,6 +179,12 @@ extern sq_event_e shr_q_event(
 );
 
 
+extern sq_event_e shr_q_event_timedwait(
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timeout    // timeout value -- not NULL
+);
+
+
 extern bool shr_q_exceeds_idle_time(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     time_t lim_secs,            // time limit in seconds

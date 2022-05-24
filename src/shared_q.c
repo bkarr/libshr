@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015-2018 Bryan Karr
+Copyright (c) 2015-2022 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -55,31 +55,41 @@ THE SOFTWARE.
 
 // define functional flags
 #define FLAG_ACTIVATED 1
-#define FLAG_DISCARD_EXPIRED 2    // discard items that exceed timelimit
-#define FLAG_LIFO_ON_LEVEL 4      // enable adaptive LIFO based on depth level
-#define FLAG_EVNT_INIT 8          // disable event first item added to queue
-#define FLAG_EVNT_LIMIT 16        // disable event max depth reached
-#define FLAG_EVNT_TIME 32         // disable event max time limit reached
-#define FLAG_EVNT_LEVEL 64        // disable event depth level reached
-#define FLAG_EVNT_EMPTY 128       // disable event last item on queue removed
-#define FLAG_EVNT_NONEMPTY 256    // disable event item added to empty queue
+#define FLAG_DISCARD_EXPIRED 2          // discard items that exceed timelimit
+#define FLAG_LIFO_ON_LEVEL 4            // adaptive LIFO based on depth level
+#define FLAG_EVNT_INIT 8                // disable event first item added
+#define FLAG_EVNT_LIMIT 16              // event max depth reached
+#define FLAG_EVNT_TIME 32               // event max time limit reached
+#define FLAG_EVNT_LEVEL 64              // event depth level reached
+#define FLAG_EVNT_EMPTY 128             // event last item on queue removed
+#define FLAG_EVNT_NONEMPTY 256          // event item added to empty queue
+
 
 
 // define useful integer constants (mostly sizes and offsets)
 enum shr_q_constants
 {
 
-    QVERSION = 1,           // queue memory layout version
+    QVERSION = 2,           // queue memory layout version - spread head and tail to different cache lines
     NODE_SIZE = 4,          // node slot count
     EVENT_OFFSET = 2,       // offset in node for event for queued item
     VALUE_OFFSET = 3,       // offset in node for data slot for queued item
-    DATA_HDR = 6,           // data header
+
+};
+
+
+// define data header layout offsets
+enum shr_q_data
+{
+
     DATA_SLOTS = 0,         // total data slots (including header)
-    TM_SEC = 1,             // offset for data timestamp seconds value
-    TM_NSEC = 2,            // offset for data timestamp nanoseconds value
-    TYPE = 3,               // offset of type indicator
-    VEC_CNT = 4,            // offset for vector count
-    DATA_LENGTH = 5,        // offset for data length
+    TM_SEC,                 // offset for data timestamp seconds value
+    TM_NSEC,                // offset for data timestamp nanoseconds value
+    UID,                    // offset of unique id
+    TYPE,                   // offset of type indicator
+    VEC_CNT,                // offset for vector count
+    DATA_LENGTH,            // offset for data length
+    DATA_HDR,               // data header length
 
 };
 
@@ -96,19 +106,19 @@ enum shr_q_disp
     TS_NSEC,                        // timestamp of last add in nanoseconds
     LISTEN_PID,                     // arrival notification process id
     LISTEN_SIGNAL,                  // arrival notification signal
+    LIMIT_SEC,                      // time limit interval in seconds
+    LIMIT_NSEC,                     // time limit interval in nanoseconds
     EVENT_HEAD,                     // event queue head
     EVENT_HD_CNT,                   // event queue head counter
+    NOTIFY_PID,                     // event notification process id
+    NOTIFY_SIGNAL,                  // event notification signal
     HEAD,                           // item queue head
     HEAD_CNT,                       // item queue head counter
     EMPTY_SEC,                      // time q last empty in seconds
     EMPTY_NSEC,                     // time q last empty in nanoseconds
-    LIMIT_SEC,                      // time limit interval in seconds
-    LIMIT_NSEC,                     // time limit interval in nanoseconds
-    NOTIFY_PID,                     // event notification process id
-    NOTIFY_SIGNAL,                  // event notification signal
     DEQ_SEM,                        // deq semaphore
     ENQ_SEM = (DEQ_SEM + 4),        // enq semaphore
-    CALL_PID = (ENQ_SEM +4),        // demand call notification process id
+    CALL_PID = (ENQ_SEM + 4),       // demand call notification process id
     CALL_SIGNAL,                    // demand call notification signal
     CALL_BLOCKS,                    // count of blocked remove calls
     CALL_UNBLOCKS,                  // count of unblocked remove calls
@@ -118,8 +128,9 @@ enum shr_q_disp
     STACK_HD_CNT,                   // head of stack counter
     LEVEL,                          // queue depth event level
     MAX_DEPTH,                      // queue max depth limit
-    AVAIL,                          // next avail free slot
-    HDR_END = (AVAIL + 18),         // end of queue header
+    EVNT_SEM,                       // event semaphore
+    AVAIL = (EVNT_SEM + 4),         // next avail free slot
+    HDR_END = (AVAIL + 14),         // end of queue header
 
 };
 
@@ -180,21 +191,19 @@ static sh_status_e format_as_queue(
 
     }
 
-    view_s view = alloc_new_data( (shr_base_s*)q, NODE_SIZE );
-    array[ EVENT_HEAD ] = view.slot;
-    array[ EVENT_HD_CNT ] = AFA( &array[ ID_CNTR ], 1 );
-    array[ EVENT_TAIL ] = view.slot;
-    array[ EVENT_TL_CNT ] = array[ EVENT_HD_CNT ];
-    array[ array[ EVENT_HEAD] ] = array[ EVENT_TAIL ];
-    array[ array[ EVENT_HEAD ] + 1 ] = array[ EVENT_TL_CNT ];
+    rc = sem_init( (sem_t*)&array[ EVNT_SEM ], 1, 0 );
 
-    view = alloc_new_data( (shr_base_s*)q, NODE_SIZE );
-    array[ HEAD ] = view.slot;
-    array[ HEAD_CNT ] = AFA( &array[ ID_CNTR ], 1 );
-    array[ TAIL ] = view.slot;
-    array[ TAIL_CNT ] = array[ HEAD_CNT ];
-    array[ array[ HEAD ] ] = array[ TAIL ];
-    array[ array[ HEAD] + 1 ] = array[ TAIL_CNT ];
+    if ( rc < 0 ) {
+
+        return SH_ERR_NOSUPPORT;
+
+    }
+
+    // init event queue
+    prime_list( (shr_base_s*)q, NODE_SIZE, EVENT_HEAD, EVENT_HD_CNT, EVENT_TAIL, EVENT_TL_CNT );
+
+    // init data queue
+    prime_list( (shr_base_s*)q, NODE_SIZE, HEAD, HEAD_CNT, TAIL, TAIL_CNT );
 
     return SH_OK;
 }
@@ -249,6 +258,7 @@ static long copy_value(
         long *array = view.extent->array;
         array[ current + TM_SEC ] = curr_time.tv_sec;
         array[ current + TM_NSEC ] = curr_time.tv_nsec;
+        array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
         array[ current + TYPE ] = type;
         array[ current + VEC_CNT ] = 1;
         array[ current + DATA_LENGTH ] = length;
@@ -315,6 +325,7 @@ static long copy_vector(
         long *array = view.extent->array;
         array[ current + TM_SEC ] = curr_time.tv_sec;
         array[ current + TM_NSEC ] = curr_time.tv_nsec;
+        array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
         array[ current + TYPE ] = SH_VECTOR_T;
         array[ current + VEC_CNT ] = vcnt;
         array[ current + DATA_LENGTH ] = ( space - DATA_HDR ) << SZ_SHIFT;
@@ -538,6 +549,7 @@ static bool add_event(
 
     }
 
+    // insure event is a one shot by clearing subscription atomically
     long flag = get_event_flag(event);
     long prev = array[FLAGS];
 
@@ -560,6 +572,10 @@ static bool add_event(
 
     // append node to end of queue
     add_end( (shr_base_s*)q, view.slot, EVENT_TAIL );
+
+    // release read of event
+    sem_post( (sem_t*) &array[ EVNT_SEM ] );
+
     return true;
 }
 
@@ -1205,7 +1221,7 @@ static void post_process_deq(
 
     view_s view = { .extent = q->current };
     long *array = view.extent->array;
-    long count = AFS(&array[ COUNT ], 1 );
+    long count = AFS( (atomictype*)&array[ COUNT ], 1 );
 
     if ( is_codel_active( array ) && count == 1 ) {
 
@@ -1229,12 +1245,6 @@ static void post_process_deq(
 
     }
 
-    if ( need_signal && is_monitored( array ) ) {
-
-        signal_event( q );
-
-    }
-
     if ( expired && is_discard_on_expire( array ) ) {
 
         memset( item, 0, sizeof(sq_item_s) );
@@ -1247,6 +1257,13 @@ static void post_process_deq(
         item->status = SH_OK;
 
     }
+
+    if ( need_signal && is_monitored( array ) ) {
+
+        signal_event( q );
+
+    }
+
 }
 
 
@@ -1422,6 +1439,13 @@ static sh_status_e release_semaphores(
     }
 
     rc = sem_destroy( (sem_t*) &(*q)->current->array[ ENQ_SEM ] );
+    if ( rc < 0 ) {
+
+        return SH_ERR_SYS;
+
+    }
+
+    rc = sem_destroy( (sem_t*) &(*q)->current->array[ EVNT_SEM ] );
     if ( rc < 0 ) {
 
         return SH_ERR_SYS;
@@ -2742,7 +2766,8 @@ extern sq_item_s shr_q_remove_timedwait(
 
 
 /*
-    shr_q_event -- returns active event or SQ_EVNT_NONE when empty
+    shr_q_event -- returns active event or SQ_EVNT_NONE when either empty or
+    error condition
 
 */
 extern sq_event_e shr_q_event(
@@ -2763,6 +2788,13 @@ extern sq_event_e shr_q_event(
     long *array = extent->array;
     sq_event_e event = SQ_EVNT_NONE;
 
+    if ( sem_trywait( (sem_t*) &array[ EVNT_SEM ] ) < 0 ) {
+
+        unguard_q_memory( q );
+        return event;
+
+    }
+
     long gen = array[ EVENT_HD_CNT ];
     long head = array[ EVENT_HEAD ];
 
@@ -2780,6 +2812,74 @@ extern sq_event_e shr_q_event(
 
         gen = array[ EVENT_HD_CNT ];
         head = array[ EVENT_HEAD ];
+        event = SQ_EVNT_NONE;
+    }
+
+    release_prev_extents( (shr_base_s*) q );
+
+    unguard_q_memory( q );
+    return event;
+}
+
+
+/*
+    shr_q_event_timedwait -- attempts for specified amount of time to return
+    active event or SQ_EVNT_NONE when empty, timed out, or error condition
+
+*/
+extern sq_event_e shr_q_event_timedwait(
+
+    shr_q_s *q,                 // pointer to queue struct -- not NULL
+    struct timespec *timeout    // timeout value -- not NULL
+
+)   {
+    if ( q == NULL ) {
+
+        return SQ_EVNT_NONE;
+
+    }
+
+    guard_q_memory( q );
+
+    extent_s *extent = q->current;
+    long *array = extent->array;
+    sq_event_e event = SQ_EVNT_NONE;
+
+    struct timespec ts;
+    clock_gettime( CLOCK_REALTIME, &ts );
+    timespecadd( &ts, timeout, &ts );
+
+    while ( sem_timedwait( (sem_t*) &q->current->array[ EVNT_SEM ], &ts ) < 0 ) {
+
+        if ( errno == ETIMEDOUT || errno == EINVAL ) {
+
+            unguard_q_memory( q );
+            return event;
+
+        }
+
+    }
+
+
+    long gen = array[ EVENT_HD_CNT ];
+    long head = array[ EVENT_HEAD ];
+
+    while ( head != array[ EVENT_TAIL ] ) {
+
+        event = next_event( q, head );
+
+        if ( remove_front( (shr_base_s*) q, head, gen, EVENT_HEAD, EVENT_TAIL )
+             != 0 ) {
+
+            // free queue node
+            add_end( (shr_base_s*) q, head, FREE_TAIL );
+            break;
+
+        }
+
+        gen = array[ EVENT_HD_CNT ];
+        head = array[ EVENT_HEAD ];
+        event = SQ_EVNT_NONE;
     }
 
     release_prev_extents( (shr_base_s*) q );

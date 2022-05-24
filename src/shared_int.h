@@ -45,6 +45,7 @@ enum shr_constants
 // define shared data structure base offsets
 enum shr_base_disp
 {
+
     TAG = 0,                        // queue identifier tag
     VERSION,                        // implementation version number
     SIZE,                           // size of queue array
@@ -57,20 +58,24 @@ enum shr_base_disp
     ROOT_FREE_CNT,                  // free data root version counter
     BUFFER,                         // max buffer size needed to read
     FLAGS,                          // configuration flag values
-    ID_CNTR,                        // unique id/gen counter
+    ID_CNTR,                        // unique id/generation counter
     SPARE,                          // spare slot
     FREE_TAIL,                      // free node list tail
     FREE_TL_CNT,                    // free node tail counter
     BASE
+
 };
 
 
 typedef unsigned long ulong;
 
 typedef struct {
-    ulong low;
-    ulong high;
+
+    atomictype low;
+    atomictype high;
+
 } DWORD;
+
 
 /*
     reference to critbit trie node
@@ -89,25 +94,30 @@ typedef struct idx_node idx_node_s;
 */
 typedef struct idx_leaf idx_leaf_s;
 
+
 /*
     structure for managing mmapped data
 */
 typedef struct extent
 {
+
     struct extent *next;
     long *array;
     long size;
     long slots;
+
 } extent_s;
 
 /*
-
+    view structure
 */
 typedef struct view
 {
+
     sh_status_e status;
     long slot;
     extent_s *extent;
+
 } view_s;
 
 
@@ -120,12 +130,15 @@ typedef struct view
     int prot;               \
     int flags
 
+
 /*
     base structure
 */
 typedef struct shr_base
 {
+
     BASEFIELDS;
+
 } shr_base_s;
 
 
@@ -143,11 +156,15 @@ typedef struct shr_base
     which is PIC register, so using builtins to be safe
 */
 static inline char CAS(
-    volatile long *mem,
-    volatile long *old,
-    long new
+
+    atomictype *mem,
+    atomictype *old,
+    atomictype new
+
 )   {
+
     return __sync_bool_compare_and_swap((long*)mem, *(long*)old, new);
+
 }
 
 
@@ -157,10 +174,13 @@ static inline char CAS(
     DWCAS -- atomic double word compare and swap (64 bit)
 */
 static inline char DWCAS(
+
     volatile DWORD *mem,
     DWORD *old,
     DWORD new
+
 )   {
+
     uint64_t  old_h = old->high, old_l = old->low;
     uint64_t  new_h = new.high, new_l = new.low;
 
@@ -177,6 +197,7 @@ static inline char DWCAS(
     "m" (r)
     : "cc", "memory");
     return r;
+
 }
 
 #else
@@ -186,10 +207,13 @@ static inline char DWCAS(
 */
 
 static inline char DWCAS(
+
     volatile DWORD *mem,
     DWORD *old,
     DWORD new
+
 )   {
+
     return __sync_bool_compare_and_swap((long long*)mem, *(long long*)old, \
                                         *(long long*)&new);
 }
@@ -198,9 +222,12 @@ static inline char DWCAS(
 
 #else
 
-#define AFS(mem, v) atomic_fetch_sub_explicit(mem, v, memory_order_relaxed)
-#define AFA(mem, v) atomic_fetch_add_explicit(mem, v, memory_order_relaxed)
-#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, new,\
+#define AFS(mem, v) atomic_fetch_sub_explicit((atomictype *)mem, v, \
+                                              memory_order_relaxed)
+#define AFA(mem, v) atomic_fetch_add_explicit((atomictype *)mem, v, \
+                                              memory_order_relaxed)
+#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(   \
+            (atomic_long*)val, (atomic_long*)old, (atomic_long)new, \
             memory_order_relaxed, memory_order_relaxed)
 #define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, \
               new, memory_order_relaxed, memory_order_relaxed)
@@ -231,6 +258,16 @@ extern sh_status_e create_base_object(
     long version            // version for memory layout
 );
 
+extern void prime_list(
+
+    shr_base_s *base,           // pointer to base struct -- not NULL
+    long slot_count,            // size of item in array slots
+    long head,                  // queue head slot number
+    long head_counter,          // queue head gen counter
+    long tail,                  // queue tail slot number
+    long tail_counter           // queue tail gen counter
+
+);
 
 extern void init_data_allocator(
     shr_base_s *base,   // pointer to base struct -- not NULL
@@ -289,6 +326,17 @@ extern long remove_front(
     long gen,           // generation count
     long head,          // head slot of list
     long tail           // tail slot of list
+);
+
+
+extern view_s realloc_pooled_mem(
+
+    shr_base_s *base,           // pointer to base struct -- not NULL
+    long slot_count,            // size as number of slots
+    long head,                  // list head slot
+    long head_counter,          // list head counter slot
+    long tail                   // list tail slot
+
 );
 
 
