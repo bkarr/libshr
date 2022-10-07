@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2017 Bryan Karr
+Copyright (c) 2017-2022 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -911,7 +911,7 @@ static void test_expiration_discard(void)
     adds = 0;
     events = 0;
     shm_unlink("testq");
-    status = shr_q_create(&q, "testq", 0, SQ_READWRITE);
+    status = shr_q_create(&q, "testq", 2, SQ_READWRITE);
     assert(status == SH_OK);
     assert(q != NULL);
     assert(shr_q_subscribe(q, SQ_EVNT_TIME) == SH_OK);
@@ -941,6 +941,11 @@ static void test_expiration_discard(void)
     assert(memcmp(item.value, "test1", item.length) == 0);
     assert(shr_q_count(q) == 0);
     assert(shr_q_event(q) == SQ_EVNT_TIME);
+    status = shr_q_add(q, "test3", 5);
+    assert(status == SH_OK);
+    status = shr_q_add(q, "test4", 5);
+    assert(status == SH_OK);
+    assert(shr_q_count(q) == 2);
     status = shr_q_destroy(&q);
     assert(status == SH_OK);
     assert(q == NULL);
