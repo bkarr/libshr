@@ -26,8 +26,8 @@ all32: shared shared_int shared_q shared_map
 
 debug: debug64
 
-debug64: CFLAGS += -mcx16 -c -O0
-debug64: shared shared_int shared_q shared_map
+debug64: CFLAGS += -mcx16 -c -O0 -D__STDC_NO_ATOMICS__
+debug64: shared shared_int shared_q 
 
 debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O0
 debug32: shared shared_int shared_q shared_map

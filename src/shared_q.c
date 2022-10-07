@@ -2562,6 +2562,9 @@ extern sq_item_s shr_q_remove(
             break;
 
         }
+
+        enq_release_gate( q );
+    
     }
 
     unguard_q_memory( q );
@@ -2646,6 +2649,9 @@ extern sq_item_s shr_q_remove_wait(
             break;
 
         }
+
+        enq_release_gate( q );
+    
     }
 
     unguard_q_memory( q );
@@ -2734,6 +2740,9 @@ extern sq_item_s shr_q_remove_timedwait(
             break;
 
         }
+
+        enq_release_gate( q );
+
     }
 
     unguard_q_memory( q );
