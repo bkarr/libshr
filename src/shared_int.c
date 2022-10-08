@@ -710,7 +710,7 @@ extern view_s expand(
 
     // attempt to update size with reallocated value
     prev >>= SZ_SHIFT;
-    CAS( &array[ SIZE ], &prev, size >> SZ_SHIFT );
+    CAS( &array[ SIZE ], &prev, array[ EXPAND_SIZE ] >> SZ_SHIFT );
 
     if ( extent->slots != array[ SIZE ] ) {
 
