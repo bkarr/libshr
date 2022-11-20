@@ -1302,6 +1302,9 @@ void pull_from_stdin(
         ssize_t sz = read(fd, &fd_si, sizeof(struct signalfd_siginfo));
         if (sz != sizeof(struct signalfd_siginfo)) {
             printf("sharedq:  read error on signal fd\n");
+            if (line != NULL) {
+                free(line);
+            }
             return;
         }
         fputs("<--", stdout);
