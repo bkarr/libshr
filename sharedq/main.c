@@ -512,6 +512,24 @@ void sharedq_list(int argc, char *argv[], int index)
 }
 
 
+sh_status_e queue_string(
+    shr_q_s *q,
+    char *string
+)   {
+    sh_status_e status = shr_q_add(q, string, strlen(string));
+    if (status == SH_ERR_ARG) {
+        printf("sharedq:  invalid argument for add function\n");
+    }
+    else if (status == SH_ERR_LIMIT) {
+        printf("sharedq:  queue at depth limit\n");
+    }
+    else if (status == SH_ERR_NOMEM) {
+        printf("sharedq:  not enough memory to complete add\n");
+    }
+    return status;
+}
+
+
 void queue_from_file(
     shr_q_s *q,
     char *fname
@@ -533,6 +551,7 @@ void queue_from_file(
     if (!S_ISREG(st.st_mode)) {
         printf("sharedq: not a regular file\n");
         close(fd);
+        queue_string(q, fname);
         return;
     }
 
@@ -603,19 +622,8 @@ void queue_from_stdin(
             free(line);
             break;
         }
-        sh_status_e status = shr_q_add(q, line, strlen(line));
-        if (status == SH_ERR_ARG) {
-            printf("sharedq:  invalid argument for add function\n");
-            free(line);
-            return;
-        }
-        if (status == SH_ERR_LIMIT) {
-            printf("sharedq:  queue at depth limit\n");
-            free(line);
-            return;
-        }
-        if (status == SH_ERR_NOMEM) {
-            printf("sharedq:  not enough memory to complete add\n");
+        sh_status_e status = queue_string(q, line);
+        if (status != SH_OK) {
             free(line);
             return;
         }

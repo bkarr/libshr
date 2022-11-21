@@ -37,7 +37,7 @@ typedef atomic_long atomictype;
 enum shr_constants
 {
     PAGE_SIZE = 4096,       // initial size of memory mapped file
-    TSTACK_DEPTH = 16,      // depth of stack for critbit trie search
+    MEM_SLOTS = 48,         // number of memory bucket allocation slots
 };
 
 
@@ -46,23 +46,23 @@ enum shr_constants
 enum shr_base_disp
 {
 
-    TAG = 0,                        // queue identifier tag
-    VERSION,                        // implementation version number
-    SIZE,                           // size of queue array
-    EXPAND_SIZE,                    // size for current expansion
-    FREE_HEAD,                      // free node list head
-    FREE_HD_CNT,                    // free node head counter
-    DATA_ALLOC,                     // next available data allocation slot
-    COUNT,                          // number of items in structure
-    ROOT_FREE,                      // root of free data index
-    ROOT_FREE_CNT,                  // free data root version counter
-    BUFFER,                         // max buffer size needed to read
-    FLAGS,                          // configuration flag values
-    ID_CNTR,                        // unique id/generation counter
-    SPARE,                          // spare slot
-    FREE_TAIL,                      // free node list tail
-    FREE_TL_CNT,                    // free node tail counter
-    BASE
+    TAG = 0,                                        // queue identifier tag
+    VERSION,                                        // implementation version number
+    SIZE,                                           // size of queue array
+    EXPAND_SIZE,                                    // size for current expansion
+    FREE_HEAD,                                      // free node list head
+    FREE_HD_CNT,                                    // free node head counter
+    DATA_ALLOC,                                     // next available data allocation slot
+    COUNT,                                          // number of items in structure
+    BUFFER,                                         // max buffer size needed to read
+    FLAGS,                                          // configuration flag values
+    ID_CNTR,                                        // unique id/generation counter
+    SPARE,                                          // spare slot
+    FREE_TAIL,                                      // free node list tail
+    FREE_TL_CNT,                                    // free node tail counter
+    MEM_BKT_START,                                  // start of free memory bucket slots
+    MEM_BKT_END = (MEM_BKT_START + (MEM_SLOTS * 2)),    // allocate space for free memory bucket slots
+    BASE = MEM_BKT_END
 
 };
 
@@ -326,17 +326,6 @@ extern long remove_front(
     long gen,           // generation count
     long head,          // head slot of list
     long tail           // tail slot of list
-);
-
-
-extern view_s realloc_pooled_mem(
-
-    shr_base_s *base,           // pointer to base struct -- not NULL
-    long slot_count,            // size as number of slots
-    long head,                  // list head slot
-    long head_counter,          // list head counter slot
-    long tail                   // list tail slot
-
 );
 
 

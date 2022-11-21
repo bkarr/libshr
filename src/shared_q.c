@@ -70,7 +70,7 @@ THE SOFTWARE.
 enum shr_q_constants
 {
 
-    QVERSION = 2,           // queue memory layout version - spread head and tail to different cache lines
+    QVERSION = 3,           // queue memory layout version - spread head and tail to different cache lines
     NODE_SIZE = 4,          // node slot count
     EVENT_OFFSET = 2,       // offset in node for event for queued item
     VALUE_OFFSET = 3,       // offset in node for data slot for queued item
@@ -1253,8 +1253,7 @@ static void post_process_deq(
 
     } else {
 
-        free_data_slots( (shr_base_s*) q, data_slot );
-        item->status = SH_OK;
+        item->status = free_data_slots( (shr_base_s*) q, data_slot );
 
     }
 
