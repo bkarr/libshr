@@ -36,17 +36,6 @@ THE SOFTWARE.
 #include "shared_int.h"
 
 
-#ifdef __x86_64__
-
-typedef int32_t halfword;
-
-#else
-
-typedef int16_t halfword;
-
-#endif
-
-
 // define useful integer constants (mostly sizes and offsets)
 enum shr_int_constants
 {
@@ -137,7 +126,6 @@ extern sh_status_e validate_name(
     if ( name == NULL ) {
 
         return SH_ERR_PATH;
-
     }
 
     size_t len = strlen( name );
@@ -145,13 +133,11 @@ extern sh_status_e validate_name(
     if ( len == 0 ) {
 
         return SH_ERR_PATH;
-
     }
 
     if ( len > PATH_MAX ) {
 
         return SH_ERR_PATH;
-
     }
 
     return SH_OK;
@@ -188,7 +174,6 @@ static void build_file_path(
 
         // backup in buffer
         index--;
-
     }
 
     // copy name into buffer
@@ -226,13 +211,11 @@ extern sh_status_e validate_existence(
     if ( size ) {
 
         *size = 0;
-
     }
 
     if ( name == NULL ) {
 
         return SH_ERR_ARG;
-
     }
 
     // build file path
@@ -247,20 +230,17 @@ extern sh_status_e validate_existence(
 
         // error performing stat
         return convert_to_status( errno );
-
     }
 
     if ( size == NULL || !S_ISREG( statbuf.st_mode ) ) {
 
         return SH_ERR_STATE;
-
     }
 
     *size = statbuf.st_size;
     if ( ( *size < PAGE_SIZE ) || ( *size % PAGE_SIZE != 0 ) ) {
 
         return SH_ERR_STATE;
-
     }
 
     return SH_OK;
@@ -294,7 +274,6 @@ static sh_status_e init_base_struct(
     if ( *base == NULL ) {
 
         return SH_ERR_NOMEM;
-
     }
 
     // initialize base structure
@@ -304,7 +283,6 @@ static sh_status_e init_base_struct(
         free( *base );
         *base = NULL;
         return SH_ERR_NOMEM;
-
     }
 
     (*base)->prot = prot;
@@ -341,7 +319,6 @@ static sh_status_e allocate_shared_memory(
         if ( errno == EINVAL ) {
 
             return SH_ERR_PATH;
-
         }
 
         return convert_to_status( errno );
@@ -354,7 +331,6 @@ static sh_status_e allocate_shared_memory(
         shm_unlink( name );
         base->fd = -1;
         return convert_to_status( errno );
-
     }
 
     return SH_OK;
@@ -388,7 +364,6 @@ static sh_status_e create_extent(
     if ( *current == NULL ) {
 
         return SH_ERR_NOMEM;
-
     }
 
     (*current)->size = slots << SZ_SHIFT;
@@ -399,7 +374,6 @@ static sh_status_e create_extent(
 
         free( *current );
         return convert_to_status( errno );
-
     }
 
     return SH_OK;
@@ -436,7 +410,6 @@ extern sh_status_e create_base_object(
          tag == NULL || tag_len <= 0 ) {
 
         return SH_ERR_ARG;
-
     }
 
     sh_status_e status = init_base_struct( base, size, name,
@@ -444,7 +417,6 @@ extern sh_status_e create_base_object(
     if ( status != SH_OK ) {
 
         return status;
-
     }
 
     status = allocate_shared_memory( *base, name, PAGE_SIZE );
@@ -453,7 +425,6 @@ extern sh_status_e create_base_object(
         free( *base );
         *base = NULL;
         return status;
-
     }
 
     status = create_extent( &(*base)->current, PAGE_SIZE >> SZ_SHIFT,
@@ -463,7 +434,6 @@ extern sh_status_e create_base_object(
         free( *base );
         *base = NULL;
         return status;
-
     }
 
     (*base)->prev = (*base)->current;
@@ -494,6 +464,7 @@ extern void prime_list(
     long tail_counter           // queue tail gen counter
 
 )   {
+
     long *array = base->current->array;
     view_s view = alloc_new_data( base, slot_count );
     array[ head ] = view.slot;
@@ -554,7 +525,6 @@ extern view_s resize_extent(
     if ( extent != view.extent ) {
 
         return view;
-
     }
 
     // did another process change size of shared object?
@@ -563,7 +533,6 @@ extern view_s resize_extent(
 
         // no, return current view
         return view;
-
     }
 
     // allocate next extent
@@ -581,14 +550,13 @@ extern view_s resize_extent(
 
     if ( CAS( (long*) &tail->next, (long*) &null, (long) next ) ) {
 
-        CAS( (long*) &base->current, (long*) &tail, (long) next );
+        (void) CAS( (long*) &base->current, (long*) &tail, (long) next );
 
     } else {
 
-        CAS( (long*) &base->current, (long*) &tail, (long) tail->next );
+        (void) CAS( (long*) &base->current, (long*) &tail, (long) tail->next );
         munmap( next->array, next->size );
         free( next );
-
     }
 
     view.extent = base->current;
@@ -610,8 +578,8 @@ static long calculate_realloc_size(
 )   {
 
     // divide by page size
-    long current_pages = extent->size >> 12;
-    long needed_pages = ( (slots << SZ_SHIFT) >> 12 ) + 1;
+    long current_pages = extent->size >> PAGE_SHIFT;
+    long needed_pages = ( (slots << SZ_SHIFT) >> PAGE_SHIFT ) + 1;
     return ( current_pages + needed_pages ) * PAGE_SIZE;
 }
 
@@ -642,24 +610,28 @@ extern view_s expand(
 
         view.extent = base->current;
         return view;
-
     }
 
     atomictype *array = (atomictype*) extent->array;
     if ( extent->slots != array[ SIZE ] ) {
 
         return resize_extent( (shr_base_s*) base, extent );
-
     }
 
     long size = calculate_realloc_size( extent, slots );
     long prev = array[ SIZE ] << SZ_SHIFT;
 
+    // enforce size limit if specified
+    if ( array[ MAX_SIZE ] != 0 && size >= array[ MAX_SIZE ] ) {
+    
+        view.status = SH_ERR_NOMEM;
+        return view;
+    }
+
     // attempt to update expansion size
     if ( size > prev ) {
 
-        CAS( &array[ EXPAND_SIZE ], &prev, size );
-
+        (void) CAS( &array[ EXPAND_SIZE ], &prev, size );
     }
 
     // attempt to extend shared memory
@@ -669,19 +641,16 @@ extern view_s expand(
 
             view.status = SH_ERR_NOMEM;
             return view;
-
         }
-
     }
 
     // attempt to update size with reallocated value
     prev >>= SZ_SHIFT;
-    CAS( &array[ SIZE ], &prev, array[ EXPAND_SIZE ] >> SZ_SHIFT );
+    (void) CAS( &array[ SIZE ], &prev, array[ EXPAND_SIZE ] >> SZ_SHIFT );
 
     if ( extent->slots != array[ SIZE ] ) {
 
         view = resize_extent( (shr_base_s*) base, extent );
-
     }
 
     return view;
@@ -713,14 +682,12 @@ extern view_s insure_in_range(
     if ( slot < base->current->slots ) {
 
         return (view_s) { .status = SH_OK, .slot = slot, .extent = base->current };
-
     }
 
     view_s view = resize_extent( base, base->current) ;
     if ( view.status == SH_OK ) {
 
         view.slot = slot;
-
     }
 
     return view;
@@ -763,7 +730,6 @@ static inline view_s insure_fit(
         if ( view.status != SH_OK ) {
 
             return view;
-
         }
     }
 
@@ -802,7 +768,6 @@ extern bool set_flag(
         if ( CAS( &array[ FLAGS ], &prev, prev | indicator ) ) {
 
             return true;
-
         }
 
         prev = (volatile long) array[ FLAGS ];
@@ -842,7 +807,6 @@ extern bool clear_flag(
         if ( CAS( &array[ FLAGS ], &prev, prev & mask ) ) {
 
             return true;
-
         }
 
         prev = (volatile long) array[ FLAGS ];
@@ -873,7 +837,6 @@ extern void update_buffer_size(
         if ( CAS( &array[ BUFFER ], &buff_sz, total ) ) {
 
             break;
-
         }
 
         buff_sz = array[ BUFFER ];
@@ -898,10 +861,6 @@ extern void add_end(
 
 )   {
 
-    // assert(base != NULL);
-    // assert(slot >= BASE);
-    // assert(tail > 0);
-
     atomictype * volatile array = (atomictype*) base->current->array;
     long gen = AFA( &array[ ID_CNTR ], 1 );
     array[ slot ] = slot;
@@ -919,16 +878,14 @@ extern void add_end(
 
             if ( DWCAS( (DWORD*) &array[ next ], &tail_before, next_after ) ) {
 
-                DWCAS( (DWORD*) &array[ tail ], &tail_before, next_after );
+                (void) DWCAS( (DWORD*) &array[ tail ], &tail_before, next_after );
                 return;
-
             }
 
         } else {
 
             DWORD tail_after = *( (DWORD* volatile) &array[ next ] );
-            DWCAS( (DWORD*) &array[ tail ], &tail_before, tail_after );
-
+            (void) DWCAS( (DWORD*) &array[ tail ], &tail_before, tail_after );
         }
     }
 }
@@ -974,9 +931,7 @@ extern long remove_front(
 
             memset( (void*) &array[ ref ], 0, 2 << SZ_SHIFT );
             return ref;
-
         }
-
     }
 
     return 0;
@@ -1004,7 +959,6 @@ extern view_s alloc_new_data(
     if ( view.status != SH_OK ) {
 
         return view;
-
     }
 
     array = view.extent->array;
@@ -1016,7 +970,6 @@ extern view_s alloc_new_data(
             view.slot = node_alloc;
             array[ node_alloc ] = slots;
             return view;
-
         }
 
         view.extent = base->current;
@@ -1025,7 +978,6 @@ extern view_s alloc_new_data(
         alloc_end = node_alloc + slots;
         view = insure_fit( base, node_alloc, slots );
         array = view.extent->array;
-
     }
 
     return (view_s) { .status = SH_ERR_NOMEM };
@@ -1064,16 +1016,13 @@ static view_s realloc_pooled_mem(
             if ( view.slot != 0 ) {
 
                 memset( &array[ node_alloc ], 0, slot_count << SZ_SHIFT );
-
             }
 
             break;
-
         }
 
         gen = array[ head_counter ];
         node_alloc = array[ head ];
-
     }
 
     return view;
@@ -1094,7 +1043,6 @@ extern view_s alloc_idx_slots(
     if ( view.slot != 0 ) {
 
         return view;
-
     }
 
     // attempt to allocate new node from current extent
@@ -1147,7 +1095,6 @@ static long find_first_fit(
     if (count < 4) {
 
         return 0;
-
     }
 
     long index = __builtin_ctzl( count ) - 2;
@@ -1160,7 +1107,6 @@ static long find_first_fit(
 
             return bucket;
         }
-
     }
 
     return 0;
@@ -1188,7 +1134,6 @@ static long lookup_freed_data(
     if ( bucket == 0 ) {
 
         return 0;
-
     }
 
     long *array = base->current->array;
@@ -1201,7 +1146,6 @@ static long lookup_freed_data(
         if ( before.low == 0 ) {
 
             return 0;
-
         }
 
         view_s view = insure_in_range( base, before.low );
@@ -1243,9 +1187,7 @@ static view_s realloc_data_slots(
         if ( view.slot != 0 ) {
 
             memset( &array[ alloc_end + 1 ], 0, ( slots - 1 ) << SZ_SHIFT );
-
         }
-
     }
 
     return view;
@@ -1271,15 +1213,12 @@ extern view_s alloc_data_slots(
 
         // round up to next power of 2
         slots = 1 << (LONG_BIT - __builtin_clzl( slots ) );
-
     }
 
     view_s view = realloc_data_slots( base, slots );
-
     if ( view.slot != 0 ) {
 
         return view;
-
     }
 
     view = alloc_new_data( base, slots );
@@ -1300,20 +1239,17 @@ extern void release_prev_extents(
         if ( base->accessors > 1 ) {
 
             return;
-
         }
 
         extent_s *next = head->next;
         if ( !CAS( (long*) &base->prev, (long*) &head, (long) next ) ) {
 
             return;
-
         }
 
         munmap( head->array, head->size );
         free( head );
         head = next;
-
     }
 }
 
@@ -1329,7 +1265,6 @@ extern sh_status_e perform_name_validations(
     if ( status ) {
 
         return status;
-
     }
 
     return validate_existence( name, size );
@@ -1347,17 +1282,14 @@ extern sh_status_e release_mapped_memory(
         if ( (*base)->current->array ) {
 
             munmap( (*base)->current->array, (*base)->current->size );
-
         }
 
         free( (*base)->current );
-
     }
 
     if ( (*base)->fd > 0 ) {
 
         close( (*base)->fd );
-
     }
 
     if ( (*base)->name ) {
@@ -1367,7 +1299,6 @@ extern sh_status_e release_mapped_memory(
         if ( rc < 0 ) {
 
             return SH_ERR_SYS;
-
         }
 
         free( (*base)->name );
@@ -1384,6 +1315,7 @@ extern sh_status_e map_shared_memory(
     size_t size                 // size of shared memory
 
 ) {
+
     (*base)->name = strdup( name );
     (*base)->prot = PROT_READ | PROT_WRITE;
     (*base)->flags = MAP_SHARED;
@@ -1395,7 +1327,6 @@ extern sh_status_e map_shared_memory(
         free( *base );
         *base = NULL;
         return convert_to_status( errno );
-
     }
 
     while ( true ) {
@@ -1409,19 +1340,16 @@ extern sh_status_e map_shared_memory(
             free( *base );
             *base = NULL;
             return convert_to_status( errno );
-
         }
 
         if ( size == (*base)->current->array[ SIZE ] << SZ_SHIFT ) {
 
             break;
-
         }
 
         size_t alt_size = (*base)->current->array[ SIZE ] << SZ_SHIFT;
         munmap( (*base)->current->array, size );
         size = alt_size;
-
     }
 
     (*base)->current->size = size;
@@ -1435,6 +1363,7 @@ extern void close_base(
     shr_base_s *base    // pointer to base struct -- not NULL
 
 )   {
+
     release_prev_extents( base );
 
     if ( base->current ) {
@@ -1442,7 +1371,6 @@ extern void close_base(
         if ( base->current->array ) {
 
             munmap(base->current->array, base->current->size);
-
         }
 
         free( base->current );
@@ -1451,12 +1379,10 @@ extern void close_base(
     if ( base->fd > 0 ) {
 
         close( base->fd );
-
     }
 
     if ( base->name ){
 
         free(base->name);
-
     }
 }

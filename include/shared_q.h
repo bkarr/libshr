@@ -9,6 +9,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include <shared.h>
 
 typedef struct shr_q shr_q_s;
 
@@ -33,18 +34,6 @@ typedef enum
 } sq_mode_e;
 
 
-typedef struct sq_vec
-{
-#ifdef __x86_64__
-    uint32_t _zeroes_;      // pad for alignment
-    sh_type_e type;         // type of data in vector
-#else
-    sh_type_e type;         // type of data in vector
-#endif
-    size_t len;             // length of data
-    void *base;             // pointer to vector data
-} sq_vec_s;
-
 typedef struct  sq_item
 {
     sh_status_e status;         // returned status
@@ -55,7 +44,7 @@ typedef struct  sq_item
     void *buffer;               // pointer to data buffer
     size_t buf_size;            // size of buffer
     int vcount;                 // vector count
-    sq_vec_s *vector;           // array of vectors
+    sh_vec_s *vector;           // array of vectors
 } sq_item_s;
 
 /*==============================================================================
@@ -132,21 +121,21 @@ extern sh_status_e shr_q_add_timedwait(
 
 extern sh_status_e shr_q_addv(
     shr_q_s *q,         // pointer to queue struct -- not NULL
-    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    sh_vec_s *vector,   // pointer to vector of items -- not NULL
     int vcnt            // count of vector array -- must be >= 1
 );
 
 
 extern sh_status_e shr_q_addv_wait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
-    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    sh_vec_s *vector,   // pointer to vector of items -- not NULL
     int vcnt            // count of vector array -- must be >= 1
 );
 
 
 extern sh_status_e shr_q_addv_timedwait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
-    sq_vec_s *vector,   // pointer to vector of items -- not NULL
+    sh_vec_s *vector,   // pointer to vector of items -- not NULL
     int vcnt,           // count of vector array -- must be >= 1
     struct timespec *timeout    // timeout value -- not NULL
 );

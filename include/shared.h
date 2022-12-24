@@ -30,6 +30,9 @@ THE SOFTWARE.
 extern "C" {
 #endif
 
+#include <stddef.h>
+#include <stdint.h>
+
 // define useful time related macros
 #define timespecadd(a, b, result)                           \
     do {                                                    \
@@ -100,6 +103,18 @@ typedef enum
 extern char *shr_explain(
     sh_status_e status          // status code
 );
+
+typedef struct sh_vec
+{
+#ifdef __x86_64__
+    uint32_t _zeroes_;      // pad for alignment
+    sh_type_e type;         // type of data in vector
+#else
+    sh_type_e type;         // type of data in vector
+#endif
+    size_t len;             // length of data
+    void *base;             // pointer to vector data
+} sh_vec_s;
 
 #ifdef __cplusplus
 }

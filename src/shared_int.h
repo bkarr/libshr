@@ -36,8 +36,11 @@ typedef atomic_long atomictype;
 // define useful integer constants (mostly sizes and offsets)
 enum shr_constants
 {
-    PAGE_SIZE = 4096,       // initial size of memory mapped file
+
+    PAGE_SHIFT = 12,        // number of shifts to equal a page
+    PAGE_SIZE = 4096,       // initial size of memory mapped file and expansion multiple
     MEM_SLOTS = 48,         // number of memory bucket allocation slots
+
 };
 
 
@@ -48,7 +51,7 @@ enum shr_base_disp
 
     TAG = 0,                                        // queue identifier tag
     VERSION,                                        // implementation version number
-    SIZE,                                           // size of queue array
+    SIZE,                                           // size of mmapped array in slots
     EXPAND_SIZE,                                    // size for current expansion
     FREE_HEAD,                                      // free node list head
     FREE_HD_CNT,                                    // free node head counter
@@ -57,7 +60,7 @@ enum shr_base_disp
     BUFFER,                                         // max buffer size needed to read
     FLAGS,                                          // configuration flag values
     ID_CNTR,                                        // unique id/generation counter
-    SPARE,                                          // spare slot
+    MAX_SIZE,                                       // maximum size of mapped memory allowed in slots
     FREE_TAIL,                                      // free node list tail
     FREE_TL_CNT,                                    // free node tail counter
     MEM_BKT_START,                                  // start of free memory bucket slots

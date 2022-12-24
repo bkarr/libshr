@@ -19,18 +19,12 @@ rh7: CFLAGS = -I../include -g3 -fPIC -std=gnu99 -Wall
 rh7: all64
 
 all64: CFLAGS += -mcx16 -c -O3 -D__STDC_NO_ATOMICS__
-all64: shared shared_int shared_q
-
-all32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O1
-all32: shared shared_int shared_q shared_map
+all64: shared shared_int shared_q shared_map
 
 debug: debug64
 
 debug64: CFLAGS += -mcx16 -c -O0 -D__STDC_NO_ATOMICS__
-debug64: shared shared_int shared_q 
-
-debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O0
-debug32: shared shared_int shared_q shared_map
+debug64: shared shared_int shared_q shared_map 
 
 check: all64
 	@set -e
@@ -60,38 +54,6 @@ checkint64: shared64
 checkshr64: shared64
 	@cd test && $(MAKE) checkshr64 && cd ..
 
-check32: CFLAGS += -m32 -D__STDC_NO_ATOMICS_ -DTESTMAIN -O0
-check32: clean shared32 checkq32
-#	@for name in $(TESTS); do echo ./$$name; ./$$name; done
-
-shared32: CFLAGS += -m32 -c -O0
-shared32: shared shared_int
-
-checkq32: CFLAGS += -m32 -c -O0
-checkq32: shared32 shared_q
-	@cd test && $(MAKE) checkq32 && cd ..
-
-checkmap32: CFLAGS += -o $(TESTMAP)
-checkmap32: shared_map
-checkint32: shared32
-	@set -e
-	@for i in $(TESTDIRS); \
-	do \
-		cd $$i; \
-		$(MAKE) checkint32; \
-		cd ..; \
-	done
-
-checkshr32: shared32
-	@set -e
-	@for i in $(TESTDIRS); \
-	do \
-		cd $$i; \
-		$(MAKE) checkshr32; \
-		cd ..; \
-	done
-
-
 %: %.c
 	@$(CC) $< $(CFLAGS) $(LIB)
 
@@ -107,6 +69,5 @@ clean:
 		cd ..; \
 	done
 
-.PHONY: all all64 all32 debug debug64 debug32 check check64 checkmap64 checkq64
-.PHONY: check32 checkmap32 checkq32 clean shared64 shared32 checkint64 checkint32
-.PHONY: checkshr64 checkshr32
+.PHONY: all all64 debug debug64 check check64 checkmap64 checkq64
+.PHONY: clean shared64 checkint64 checkshr64 

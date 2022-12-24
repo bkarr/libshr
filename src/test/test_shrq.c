@@ -34,6 +34,7 @@ THE SOFTWARE.
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <shared.h>
 #include "shared_int.h"
 #include "shared_q.h"
 
@@ -489,7 +490,7 @@ static void test_addv_errors(void)
     sh_status_e status;
     shr_q_s *q = NULL;
     shr_q_s *tq = NULL;
-    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+    sh_vec_s vector[2] = {{0, 0}, {0, 0}};
 
     status = shr_q_addv(q, vector, 1);
     assert(status == SH_ERR_ARG);
@@ -540,7 +541,7 @@ static void test_addv_wait_errors(void)
     sh_status_e status;
     shr_q_s *q = NULL;
     shr_q_s *tq = NULL;
-    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+    sh_vec_s vector[2] = {{0, 0}, {0, 0}};
 
     status = shr_q_addv_wait(q, vector, 1);
     assert(status == SH_ERR_ARG);
@@ -592,7 +593,7 @@ static void test_addv_timedwait_errors(void)
     shr_q_s *q = NULL;
     shr_q_s *tq = NULL;
     struct timespec ts = {0};
-    sq_vec_s vector[2] = {{0, 0}, {0, 0}};
+    sh_vec_s vector[2] = {{0, 0}, {0, 0}};
 
     status = shr_q_addv_timedwait(q, vector, 1, &ts);
     assert(status == SH_ERR_ARG);
@@ -1016,7 +1017,7 @@ static void test_vector_operations(void)
     shr_q_s *q = NULL;
     sq_item_s item = {0};
     struct timespec ts = {0};
-    sq_vec_s vector[2] = {{0}, {0}};
+    sh_vec_s vector[2] = {{0}, {0}};
 
     vector[0].type = SH_ASCII_T;
     vector[1].type = SH_ASCII_T;
