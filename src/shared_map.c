@@ -58,10 +58,11 @@ enum shr_map_constants
 };
 
 
-// define data header layout offsets
+// define header for k/v pair data
 enum shr_map_data
 {
 
+    TOTAL_SLOTS,            // number of slots allocated to k/v pair data
     TYPE_VEC,               // offset of type indicator/vector count shifted together
     DATA_LENGTH,            // value length
     KEY_LENGTH,             // key length
@@ -792,7 +793,6 @@ static sh_status_e allocate_new_index(
 
     } else {
 
-        array[ view.slot ] = new_bkt_cnt;       
         (void) free_data_slots( (shr_base_s*)map, view.slot ); 
     }
 
@@ -914,20 +914,38 @@ static sm_item_s scan_for_match(
             continue;            
         }
         
-        if ( hash != array[ item + HASH ]) {
+        volatile long counter = array[ item + DATA_CNTR ];
+        volatile long stored_hash = array[ item + HASH ];
+        if ( hash != stored_hash ) {
         
             continue;
         }
 
-        view = insure_in_range( (shr_base_s*)map, array[ item + DATA_SLOT ] + array[ item + ITEM_LENGTH ] );
+        volatile long data_slot = array[ item + DATA_SLOT ];
+        long length = array[ data_slot + TOTAL_SLOTS ];
+        if ( data_slot == 0 || counter == 0 || length == 0 ) {
+        
+            continue;
+        }
+
+        view = insure_in_range( (shr_base_s*)map, data_slot + length );
         array = view.extent->array;
-        if ( pair_compare_keys( array, array[ item + DATA_SLOT ], key, klength ) == SH_ERR_NO_MATCH ) {
+        if ( pair_compare_keys( array, data_slot, key, klength ) == SH_ERR_NO_MATCH ) {
         
             continue;
         }
         
-        copy_to_buffer( array, array[ item + DATA_SLOT ], &result, buffer, buff_size );
-        result.token = array[ item + DATA_CNTR ];
+        if (counter != array[ item + DATA_CNTR ] ) {
+        
+            // update of k/v pair detected -- restart bucket loop
+            *empty = 0;
+            i = 0;
+            mask = 1;
+            continue;
+        }
+
+        copy_to_buffer( array, data_slot, &result, buffer, buff_size );
+        result.token = counter;
         result.status = SH_OK;
         break; 
     }
@@ -1068,7 +1086,6 @@ static sm_item_s add_value_uniquely(
     result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
     if ( result.status != SH_OK ) {
 
-        map->current->array[ data_slot ] = size;
         free_data_slots( (shr_base_s*)map, data_slot );
     }
 
