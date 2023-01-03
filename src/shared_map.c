@@ -104,7 +104,7 @@ enum shr_map_disp
     DEFER_HD_CNT,           // defer head version counter
     CURRENT_IDX,            // active hash index
     CRNT_BKT_CNT,           // number of buckets at CURRENT_IDX value
-    PREV_IDX,               // expanded hash index
+    PREV_IDX,               // unexpanded hash index
     PREV_BKT_CNT,           // number of buckets at PREV_IDX value
     SEED,                   // seed value for hash function
     ALIGN,                  // spare for alignment
@@ -615,8 +615,8 @@ static void reindex_pair(
             continue;            
         }
 
-        DWORD before = { .high = bit_map, .low = array[ bucket + BTMP_CNTR ] };
-        DWORD after = { .high = bit_map | mask, .low = before.low + 1 };
+        DWORD before = { .low = bit_map, .high = array[ bucket + BTMP_CNTR ] };
+        DWORD after = { .low = bit_map | mask, .high = before.high + 1 };
         if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
         
             continue;
@@ -658,8 +658,8 @@ static void reindex_bucket(
         }
 
         // clear bit for item to know it is safe to reindex
-        DWORD before = { .high = bit_map, .low = array[ bucket + BTMP_CNTR ] };
-        DWORD after = { .high = bit_map & ~mask, .low = before.low + 1 };
+        DWORD before = { .low = bit_map, .high = array[ bucket + BTMP_CNTR ] };
+        DWORD after = { .low = bit_map & ~mask, .high = before.high + 1 };
         if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
         
             continue;
@@ -669,8 +669,8 @@ static void reindex_bucket(
     }
 
     // mark bucket as fully reindexed
-    DWORD before = { .high = 0, .low = array[ bucket + BTMP_CNTR ] };
-    DWORD after = { .high = 1, .low = before.low + 1 };
+    DWORD before = { .low = 0, .high = array[ bucket + BTMP_CNTR ] };
+    DWORD after = { .low = 1, .high = before.high + 1 };
     (void) DWCAS( (DWORD*)&array[ bucket ], &before, after );
 }
 
@@ -785,7 +785,7 @@ static sh_status_e allocate_new_index(
     array[ view.slot ] = 0;
 
     // replace current index with expanded
-    DWORD after = { .high = view.slot, .low = new_bkt_cnt };
+    DWORD after = { .low = view.slot, .high = new_bkt_cnt };
     if ( DWCAS( (DWORD*)&array[ CURRENT_IDX ], &before, after ) ) {
 
         long rehash = array[ current_idx + REHASH_BKT ];
@@ -1026,11 +1026,12 @@ static sm_item_s hash_add(
     array = view.extent->array;
     guard_bucket( array, bucket );
 
-    while ( result.status == SH_ERR_NO_MATCH ) {
+    while ( true ) {
 
         if ( is_expanded( map ) ) {
         
             reindex_indices( map ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
         }
      
         long empty = 0;
@@ -1102,6 +1103,50 @@ static sm_item_s add_value_uniquely(
         free_data_slots( (shr_base_s*)map, data_slot );
     }
 
+    return result;
+}
+
+
+static sm_item_s find_value(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            bucket = ( ( hash & ( array[ PREV_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ PREV_IDX ];
+            reindex_bucket(map, bucket ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        volatile long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, buffer, buff_size );
+
+        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+
+            break;
+        }
+    }
+      
+    unguard_bucket( array, bucket );
     return result;
 }
 
@@ -1325,8 +1370,9 @@ extern sh_status_e shr_map_close(
     returns sh_status_e:
 
     SH_OK       on success
-    SH_ERR_ARG  if pointer to map struct, key, or value is NULL or if key length
-                or value length equals 0
+    SH_ERR_ARG  if pointer to map struct, key, or value is NULL, key length
+                or value length equals 0, or if buffer address or buff_size
+                pointer is NULL, or if buffer is not NULL and buff_size is 0
 */
 extern sm_item_s shr_map_add(
 
@@ -1359,6 +1405,51 @@ extern sm_item_s shr_map_add(
         
         (void) AFA( &map->current->array[ COUNT ], 1 );
     }
+
+    unguard_map_memory( map );
+    return result;
+}
+
+/*
+    shr_map_get -- return value that matches key or a status of no match
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct is NULL, key pointer is NULL, 
+                        key length equals 0, buffer pointer address is NULL, pointer 
+                        to buff_size is NULL, or if buffer pointer is not NULL and buff_size is 0
+    SH_ERR_EMPTY        no items in map
+    SH_ERR_NO_MATCH     no value found that matches key 
+*/
+extern sm_item_s shr_map_get(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+                                
+)   {
+
+    if (map == NULL ||
+        key == NULL ||
+        klength == 0 ||
+        buffer == NULL ||
+        buff_size == NULL ||
+        ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    if ( map->current->array[ COUNT ] == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_EMPTY };
+    }
+
+    guard_map_memory( map );
+
+    sm_item_s result = find_value( map, key, klength, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;

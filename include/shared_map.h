@@ -77,6 +77,15 @@ extern sm_item_s shr_map_addv(
 );
 
 
+extern sm_item_s shr_map_get(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+);
+
+
 extern sm_item_s shr_map_put(
     shr_map_s *map,			    // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
