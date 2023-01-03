@@ -33,6 +33,7 @@ tags
 *.i*86
 *.x86_64
 *.hex
+test_shrmap
 test_shrq
 test_internal
 test_shared

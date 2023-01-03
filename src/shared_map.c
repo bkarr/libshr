@@ -915,16 +915,29 @@ static sm_item_s scan_for_match(
         }
         
         volatile long counter = array[ item + DATA_CNTR ];
-        volatile long stored_hash = array[ item + HASH ];
-        if ( hash != stored_hash ) {
+        if ( counter == 0 ) {
         
+            // update of k/v pair detected -- restart bucket loop
+            *empty = 0;
+            i = 0;
+            mask = 1;
+            continue;
+        }
+
+        if ( hash != array[ item + HASH ] ) {
+        
+            // items cannot match
             continue;
         }
 
         volatile long data_slot = array[ item + DATA_SLOT ];
         long length = array[ data_slot + TOTAL_SLOTS ];
-        if ( data_slot == 0 || counter == 0 || length == 0 ) {
+        if ( data_slot == 0 || length == 0 ) {
         
+            // update of k/v pair detected -- restart bucket loop
+            *empty = 0;
+            i = 0;
+            mask = 1;
             continue;
         }
 
@@ -977,10 +990,10 @@ static sh_status_e add_to_bucket(
 
     array[ slot + HASH ] = hash;
     array[ slot + ITEM_LENGTH ] = pair_size;
-    before.high = bitmap & ( (long)IDX_BLOCK << 32 );
-    before.low = counter;
+    before.low = bitmap & (long)IDX_BLOCK;
+    before.high = counter;
     after.low = bitmap | ( 1 << empty );
-    after.high = before.low + 1;
+    after.high = before.high + 1;
     if ( DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
 
         return SH_OK;
