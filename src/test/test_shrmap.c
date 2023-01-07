@@ -409,7 +409,116 @@ static void test_get_single_bucket( void ) {
     status = shr_map_close( &map );
     assert( status == SH_OK );
     assert( map == NULL );
+}
 
+
+static void test_remove_single_bucket( void ) {
+
+    sh_status_e status;
+    shr_map_s *map = NULL;
+    void *buffer = NULL;
+    size_t buff_size = 0;
+    char *key = NULL;
+    size_t klen = 0;
+    sm_item_s result = {0};
+ 
+    status = shr_map_open( &map, "testmap" );
+    assert( status == SH_OK );
+
+    key = "one";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "two";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "three";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "four";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "five";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "six";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "seven";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "eight";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "nine";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "ten";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "eleven";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "twelve";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "thirteen";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "fourteen";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+    key = "fifteen";
+    klen = strlen( key );
+    result = shr_map_remove( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+
+    status = shr_map_close( &map );
+    assert( status == SH_OK );
+    assert( map == NULL );
 }
 
 
@@ -429,6 +538,7 @@ int main( void ) {
     test_open_close();
     test_add_single_bucket();
     test_get_single_bucket();
+    test_remove_single_bucket();
     status = shr_map_destroy( &map );
     assert( status == SH_OK );
 

@@ -382,8 +382,8 @@ static void unguard_map_memory(
 
 static void guard_bucket(
         
-        long *array,         
-        long bucket
+    long *array,         
+    long bucket
         
 )   {
     (void) AFA( &array[ bucket + BKT_ACCESSORS ], 1 );
@@ -392,8 +392,8 @@ static void guard_bucket(
 
 static void unguard_bucket(
         
-        long *array,            
-        long bucket
+    long *array,            
+    long bucket
         
 )   {
     (void) AFS( &array[ bucket + BKT_ACCESSORS ], 1 );
@@ -733,6 +733,16 @@ static sh_status_e reindex_indices(
 }
 
 
+static bool is_bucket_contended(
+        
+    long *array,         
+    long bucket
+        
+)   {
+    return array[ bucket + BKT_ACCESSORS ] > 1;
+}
+
+
 static bool is_bucket_item_empty( 
 
     shr_map_s *map,     // pointer to map
@@ -887,6 +897,7 @@ static sm_item_s scan_for_match(
     long bucket,                // bucket slot
     long bitmap,                // bucket bitmap 
     long *empty,                // empty slot pointer
+    long *index,                // pointer to index of matched item in bucket
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
 
@@ -958,6 +969,7 @@ static sm_item_s scan_for_match(
         }
 
         copy_to_buffer( array, data_slot, &result, buffer, buff_size );
+        *index = i;
         result.token = counter;
         result.status = SH_OK;
         break; 
@@ -1006,6 +1018,35 @@ static sh_status_e add_to_bucket(
     return SH_ERR_NO_MATCH;
 }
 
+
+
+static sh_status_e remove_from_bucket( 
+    
+    long *array,        // pointer to map array
+    long hash,          // computed hash value
+    long index,         // bucket index of k/v pair to be removed
+    long bucket,        // slot index for bucket
+    long bitmap,        // previous captured bucket bitmap 
+    long counter        // previous captured bucket bitmap version counter
+        
+)   {
+
+    DWORD before = { .low = bitmap & (long)IDX_BLOCK, .high = counter };
+    DWORD after = { .low = bitmap & ~( 1 << index ), .high = before.high + 1 };
+    if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
+
+        return SH_ERR_CONFLICT;
+    }
+
+    long slot = bucket + ( index * INDEX_ITEM );
+    array[ slot + DATA_CNTR ] = 0;
+    array[ slot + DATA_SLOT ] = 0;
+    array[ slot + HASH ] = 0;
+    array[ slot + ITEM_LENGTH ] = 0;
+    return SH_OK;
+}
+
+
 static sm_item_s hash_add(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -1035,10 +1076,11 @@ static sm_item_s hash_add(
         }
      
         long empty = 0;
+        long index = 0;
         long bitmap = array[ bucket + BITMAP ];
         long counter = array[ bucket + BTMP_CNTR ]; 
 
-        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, buffer, buff_size );
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
         if ( result.status == SH_OK ) { 
 
             result.status = SH_ERR_CONFLICT; 
@@ -1135,15 +1177,83 @@ static sm_item_s find_value(
         }
      
         long empty = 0;
+        long index = 0;
         long bitmap = array[ bucket + BITMAP ];
         volatile long counter = array[ bucket + BTMP_CNTR ]; 
 
-        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, buffer, buff_size );
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
 
         if ( counter == array[ bucket + BTMP_CNTR ] ) {
 
             break;
         }
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
+
+
+static sm_item_s remove_value(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            reindex_indices( map ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        volatile long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
+
+        if ( counter != array[ bucket + BTMP_CNTR ] ) {
+
+            continue;
+        }
+        
+        if ( result.status != SH_OK ) {
+
+            break;
+        }
+
+        result.status = remove_from_bucket( array, hash, index, bucket, bitmap, counter );
+        if ( result.status != SH_OK ) {
+
+            continue;
+        }
+
+        long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+        if ( is_bucket_contended( array, bucket ) ) {
+
+            //TODO add k/v memory to defer list
+        } else {
+        
+            // release uncontended k/v memory
+            free_data_slots( (shr_base_s*)map, pair_slot );
+        }
+        break;
     }
       
     unguard_bucket( array, bucket );
@@ -1455,4 +1565,52 @@ extern sm_item_s shr_map_get(
     return result;
 }
 
+
+/*
+    shr_map_remove -- removes value associated with the specified key
+
+    The shr_map_remove function finds the value that matches the key if it exists,
+    and returns the value after removing it from index.
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct is NULL, key pointer is NULL, 
+                        key length equals 0, buffer pointer address is NULL, pointer 
+                        to buff_size is NULL, or if buffer pointer is not NULL and buff_size is 0
+    SH_ERR_EMPTY        no items in map
+    SH_ERR_NO_MATCH     no value found that matches key 
+*/
+extern sm_item_s shr_map_remove(
+
+    shr_map_s *map,			    // pointer to map structure -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    if (map == NULL ||
+        key == NULL ||
+        klength == 0 ||
+        buffer == NULL ||
+        buff_size == NULL ||
+        ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    if ( map->current->array[ COUNT ] == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_EMPTY };
+    }
+
+    guard_map_memory( map );
+
+    sm_item_s result = remove_value( map, key, klength, buffer, buff_size );
+
+    unguard_map_memory( map );
+    return result;
+}
 
