@@ -75,7 +75,8 @@ enum shr_map_data
 enum shr_map_bkt_hdr
 {
 
-    BITMAP,                 // lower half bitmap of in use index items/upper half bucket 0 null value used to block inserts
+    BITMAP,                 // lower half bitmap of in use index items/upper half 
+                            // bucket 0 null value used to block inserts
     BTMP_CNTR,              // version counter of bitmap updates
     FILTER,                 // mini filter of memory sizes indexed in bucket
     REHASH_BKT = FILTER,    // bucket index for rehashing to larger index structure
@@ -315,6 +316,81 @@ static sh_status_e initialize_map_struct(
 }
 
 
+static long next_item(
+
+    shr_map_s *map,         // pointer to map
+    long slot
+
+)   {
+
+    view_s view = insure_in_range( (shr_base_s*)map, slot );
+
+    if ( view.slot == 0 ) {
+
+        return 0;
+    }
+
+    long *array = view.extent->array;
+    long next = array[ slot ];
+
+    if ( next == 0 ) {
+
+        return 0;
+    }
+
+    view = insure_in_range( (shr_base_s*)map, next + SIZE_OFFSET );
+
+    if ( view.slot == 0 ) {
+
+        return 0;
+    }
+
+    array = view.extent->array;
+
+    if ( next < HDR_END ) {
+
+        return 0;
+    }
+
+    return array[next + SLOT_OFFSET];
+}
+
+
+static long defer_remove(
+
+    shr_map_s *map      // pointer to map
+
+)   {
+
+    long *array = map->current->array;
+    long gen = array[ DEFER_HD_CNT ];
+    long head = array[ DEFER_HEAD ];
+
+    if ( head == array[ DEFER_TAIL ] ) {
+
+        return 0;   // try again
+    }
+
+    view_s view = insure_in_range( (shr_base_s*)map, head );
+    array = view.extent->array;
+    long data_slot = next_item( map, head );
+
+    if ( data_slot == 0 ) {
+
+        return 0;   // try again
+    }
+
+    if ( remove_front( (shr_base_s*) map, head, gen, DEFER_HEAD, DEFER_TAIL ) == 0 ) {
+
+        return 0;   // try again
+    }
+
+    // free queue node
+    add_end( (shr_base_s*)map, head, FREE_TAIL );
+    return data_slot;
+}
+
+
 static bool is_valid_map(
 
     shr_map_s *map          // pointer to map
@@ -355,6 +431,31 @@ static bool is_expanded(
 }
 
 
+static void clean_defer_list(
+
+    shr_map_s *map      // pointer to map
+
+)   {
+
+    long *array = map->current->array;
+
+    while ( array[ DEFER_HEAD ] != array[ DEFER_TAIL ] ) {
+
+        if ( ( volatile long ) array[ ACCESSORS ] > 1 ) {
+        
+            return;
+        }
+
+        long data_slot = defer_remove( map );
+        if (data_slot >= BASE ) {
+         
+            (void) free_data_slots( (shr_base_s*)map, data_slot ); 
+        }
+    }
+}
+
+
+
 static void guard_map_memory(
 
     shr_map_s *map      // pointer to map
@@ -363,7 +464,7 @@ static void guard_map_memory(
 
     (void) AFA( &map->accessors, 1 );   // protect extents
     (void) AFA( &map->current->array[ ACCESSORS ], 1 );
-    //TODO clean up defer list
+    clean_defer_list( map );
 }
 
 
@@ -374,7 +475,7 @@ static void unguard_map_memory(
 )   {
 
     release_prev_extents( (shr_base_s*) map );
-    //TODO clean up defer list
+    clean_defer_list( map );
     (void) AFS( &map->current->array[ ACCESSORS ], 1 );
     (void) AFS( &map->accessors, 1 );
 }
@@ -810,6 +911,32 @@ static sh_status_e allocate_new_index(
 }
 
 
+static sh_status_e release_pair(
+
+    shr_map_s *map,     // pointer to map
+    long pair_slot      // slot index for k/v pair
+
+)   {
+
+    // allocate list node
+    view_s view = alloc_idx_slots( (shr_base_s*)map );
+    if ( view.slot == 0 ) {
+
+        return SH_ERR_NOMEM;
+    }
+
+    // update list node with memory info
+    long *array = view.extent->array;
+    array[ view.slot + SLOT_OFFSET ] = pair_slot;
+    array[ view.slot + SIZE_OFFSET ] = array[ pair_slot ];
+
+    // append node to end of defer list
+    add_end( (shr_base_s*)map, view.slot, DEFER_TAIL );
+
+    return SH_OK;
+}
+
+
 static sh_status_e release_prev_index(
 
     shr_map_s *map      // pointer to map
@@ -1142,7 +1269,7 @@ static sm_item_s add_value_uniquely(
     result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
     if ( result.status != SH_OK ) {
 
-        free_data_slots( (shr_base_s*)map, data_slot );
+        (void) free_data_slots( (shr_base_s*)map, data_slot );
     }
 
     return result;
@@ -1238,20 +1365,21 @@ static sm_item_s remove_value(
             break;
         }
 
+        long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
         result.status = remove_from_bucket( array, hash, index, bucket, bitmap, counter );
         if ( result.status != SH_OK ) {
 
             continue;
         }
 
-        long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
         if ( is_bucket_contended( array, bucket ) ) {
 
-            //TODO add k/v memory to defer list
+            // add k/v memory to defer list
+            result.status = release_pair( map, pair_slot );
         } else {
         
             // release uncontended k/v memory
-            free_data_slots( (shr_base_s*)map, pair_slot );
+            result.status = free_data_slots( (shr_base_s*)map, pair_slot );
         }
         break;
     }
@@ -1435,7 +1563,7 @@ extern sh_status_e shr_map_open(
     
     (*map)->seed = (*map)->current->array[ SEED ];
 
-    //TODO clean defer list
+    clean_defer_list( *map );
     return SH_OK;
 }
 
