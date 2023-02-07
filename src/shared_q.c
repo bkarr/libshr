@@ -2848,7 +2848,7 @@ extern size_t shr_q_buffer(
 
 /*
     shr_q_level -- sets value for queue depth level event generation and for
-        adaptive LIFO
+    adaptive LIFO
 
     returns sh_status_e:
 
@@ -3300,7 +3300,7 @@ extern bool shr_q_is_subscribed(
 
 /*
     shr_q_prod -- activates at least one blocked caller if there are blocked
-                  remove calls
+    remove calls
 
     returns sh_status_e:
 

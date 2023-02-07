@@ -86,6 +86,26 @@ extern sm_item_s shr_map_get(
 );
 
 
+extern sm_item_s shr_map_get_partial(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    size_t offset,              // offset into last field to start read
+    size_t length,              // length of max read length
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+);
+
+
+extern sm_item_s shr_map_get_attr(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+);
+
+
 extern sm_item_s shr_map_put(
     shr_map_s *map,			    // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL

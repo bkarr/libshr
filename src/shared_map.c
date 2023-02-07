@@ -687,55 +687,136 @@ static void copy_to_buffer(
 }
 
 
+static sh_status_e add_to_bucket( 
+    
+    long *array,        // pointer to map array
+    long hash,          // computed hash value
+    long pair_slot,     // slot index for k/v pair
+    long pair_size,     // allocated size of k/v pair
+    long bucket,        // slot index for bucket
+    long empty,         // empty slot in bucket
+    long bitmap,        // previous captured bucket bitmap 
+    long counter        // previous captured bucket bitmap version counter
+        
+)   {
 
-static void reindex_pair(
+    DWORD before = { 0 };
+    DWORD after = { .low = pair_slot, .high = AFA( &array[ ID_CNTR ], 1 ) };
+    long slot = bucket + ( empty * INDEX_ITEM );
+    if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
 
-    shr_map_s *map,     // pointer to map
-    long pair           // k/v pair slots to be reindexed
+        return SH_ERR_CONFLICT;
+    }
+
+    array[ slot + HASH ] = hash;
+    array[ slot + ITEM_LENGTH ] = pair_size;
+    before.low = bitmap & (long)IDX_BLOCK;
+    before.high = counter;
+    after.low = bitmap | ( 1 << empty );
+    after.high = before.high + 1;
+    if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
+
+        array[ slot + HASH ] = 0;
+        array[ slot + ITEM_LENGTH ] = 0;
+        array[ slot + DATA_SLOT ] = 0;
+        array[ slot + DATA_CNTR ] = 0;
+        return SH_ERR_CONFLICT;
+    }
+
+    long filter = array[ bucket + FILTER ];
+    while ( !( filter & pair_size ) && 
+            !CAS( &array[ bucket + FILTER ], &filter,  filter | pair_size ) ) {
+
+        filter = array[ bucket + FILTER ];
+    }
+
+    return SH_OK;
+}
+
+
+static sh_status_e scan_for_empty_slot(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    long pair,                  // k/v pair slots to be reindexed
+    long hash,                  // computed hash value
+    long bucket,                // bucket slot
+    long bitmap,                // bucket bitmap 
+    long *empty,                // empty slot pointer
+    long *index                 // pointer to index of matched item in bucket
 
 )   {
 
     long *array = map->current->array;
-    long hash = array[ pair + HASH ];
-    long length = array[ pair + ITEM_LENGTH ];
-    long slot = array[ pair + DATA_SLOT ];
-    long counter = array[ pair + DATA_CNTR ];
-    long bucket_count = array[ CRNT_BKT_CNT ];
-    long bucket = ( ( hash & ( bucket_count - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
 
     view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
     array = view.extent->array;
-    
+
     long mask = 1;
+    *empty = 0;
     for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
 
         mask <<= 1;
-        long bit_map = array[ bucket + BITMAP ];
-        if ( bit_map & mask ) {
+        long item = bucket + ( i * INDEX_ITEM );
+        if ( !( bitmap & mask ) ) {
             
+            if ( *empty == 0 && array[ item + DATA_SLOT ] == 0 ) {
+            
+                *empty = i;
+            }        
+
             continue;            
         }
 
-        DWORD before = { .low = bit_map, .high = array[ bucket + BTMP_CNTR ] };
-        DWORD after = { .low = bit_map | mask, .high = before.high + 1 };
-        if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
+        if ( array[ item + DATA_SLOT] == pair ) {
         
-            continue;
+            return SH_ERR_CONFLICT;
         }
 
-        long item = bucket + ( i * INDEX_ITEM );
-        array[ item + HASH ] = hash;
-        array[ item + ITEM_LENGTH ] = length;
-        array[ item + DATA_SLOT ] = slot;
-        array[ item + DATA_CNTR ] = counter;
+    }
 
-        long filter = array[ bucket + FILTER ];
-        while ( !(filter & length) && !CAS( &array[ bucket + FILTER ], &filter, filter | length ) ) {
+    return SH_OK; 
+}
 
-            filter = array[ bucket + FILTER ];
+
+static void reindex_pair(
+
+    shr_map_s *map,     // pointer to map
+    long slot           // k/v pair slots to be reindexed
+
+)   {
+
+    long *array = map->current->array;
+    long hash = array[ slot + HASH ];
+    long length = array[ slot + ITEM_LENGTH ];
+    long pair = array[ slot + DATA_SLOT ];
+    long counter = array[ slot + DATA_CNTR ];
+    long bucket_count = array[ CRNT_BKT_CNT ];
+    long bucket = ( ( hash & ( bucket_count - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+
+    if ( hash == 0 || length == 0 || pair == 0 || counter == 0 ) {
+    
+        return;
+    }
+    
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+ 
+    while ( true ) {
+
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        long counter = array[ bucket + BTMP_CNTR ]; 
+
+        if ( scan_for_empty_slot( map, pair, hash, bucket, bitmap, &empty, &index ) == SH_ERR_CONFLICT ) {
+
+            break;
         }
 
-        break;
+        if ( add_to_bucket( array, hash, pair, length, bucket, empty, bitmap, counter ) == SH_OK ) {
+            
+            break;
+        }
     }
 }
 
@@ -749,6 +830,8 @@ static void reindex_bucket(
 
     long *array = map->current->array;
     long mask = 1;
+
+    // first potentially uncontended pass
     for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
 
         mask <<= 1;
@@ -758,7 +841,7 @@ static void reindex_bucket(
             continue;            
         }
 
-        // clear bit for item to know it is safe to reindex
+        // clear bit for item to know initial reindex is uncontended
         DWORD before = { .low = bit_map, .high = array[ bucket + BTMP_CNTR ] };
         DWORD after = { .low = bit_map & ~mask, .high = before.high + 1 };
         if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
@@ -766,7 +849,34 @@ static void reindex_bucket(
             continue;
         }
 
-        reindex_pair( map, bucket + ( i * INDEX_ITEM ) );
+        long slot = bucket + ( i * INDEX_ITEM );
+        reindex_pair( map, slot );
+        array[ slot + DATA_SLOT ] = 0;
+        array[ slot + DATA_CNTR ] = 0;
+        array[ slot + HASH ] = 0;
+        array[ slot + ITEM_LENGTH ] = 0;
+    }
+
+    // second pass to help blocked threads complete reindexing
+    // and insuring entire bucket is cleared
+    for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
+
+        long slot = bucket + ( i * INDEX_ITEM );
+        if ( array[ slot + DATA_SLOT ] == 0 ) {
+
+            continue;
+        }
+
+        reindex_pair( map, slot );
+        array[ slot + DATA_SLOT ] = 0;
+        array[ slot + DATA_CNTR ] = 0;
+        array[ slot + HASH ] = 0;
+        array[ slot + ITEM_LENGTH ] = 0;
+    }
+
+    if ( array[ bucket + BTMP_CNTR ] == 1 ) {
+    
+        return;
     }
 
     // mark bucket as fully reindexed
@@ -1024,9 +1134,7 @@ static sm_item_s scan_for_match(
     long bucket,                // bucket slot
     long bitmap,                // bucket bitmap 
     long *empty,                // empty slot pointer
-    long *index,                // pointer to index of matched item in bucket
-    void **buffer,              // address of buffer pointer -- not NULL
-    size_t *buff_size           // pointer to size of buffer -- not NULL
+    long *index                 // pointer to index of matched item in bucket
 
 )   {
 
@@ -1095,7 +1203,6 @@ static sm_item_s scan_for_match(
             continue;
         }
 
-        copy_to_buffer( array, data_slot, &result, buffer, buff_size );
         *index = i;
         result.token = counter;
         result.status = SH_OK;
@@ -1104,47 +1211,6 @@ static sm_item_s scan_for_match(
 
     return result;
 }
-
-
-static sh_status_e add_to_bucket( 
-    
-    long *array,        // pointer to map array
-    long hash,          // computed hash value
-    long pair_slot,     // slot index for k/v pair
-    long pair_size,     // allocated size of k/v pair
-    long bucket,        // slot index for bucket
-    long empty,         // empty slot in bucket
-    long bitmap,        // previous captured bucket bitmap 
-    long counter        // previous captured bucket bitmap version counter
-        
-)   {
-
-    DWORD before = { 0 };
-    DWORD after = { .low = pair_slot, .high = AFA( &array[ ID_CNTR ], 1 ) };
-    long slot = bucket + ( empty * INDEX_ITEM );
-    if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
-
-        return SH_ERR_CONFLICT;
-    }
-
-    array[ slot + HASH ] = hash;
-    array[ slot + ITEM_LENGTH ] = pair_size;
-    before.low = bitmap & (long)IDX_BLOCK;
-    before.high = counter;
-    after.low = bitmap | ( 1 << empty );
-    after.high = before.high + 1;
-    if ( DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
-
-        return SH_OK;
-    }
-
-    array[ slot + HASH ] = 0;
-    array[ slot + ITEM_LENGTH ] = 0;
-    array[ slot + DATA_SLOT ] = 0;
-    array[ slot + DATA_CNTR ] = 0;
-    return SH_ERR_NO_MATCH;
-}
-
 
 
 static sh_status_e remove_from_bucket( 
@@ -1207,9 +1273,11 @@ static sm_item_s hash_add(
         long bitmap = array[ bucket + BITMAP ];
         long counter = array[ bucket + BTMP_CNTR ]; 
 
-        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
         if ( result.status == SH_OK ) { 
 
+            long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+            copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
             result.status = SH_ERR_CONFLICT; 
             break;
         }
@@ -1308,10 +1376,14 @@ static sm_item_s find_value(
         long bitmap = array[ bucket + BITMAP ];
         volatile long counter = array[ bucket + BTMP_CNTR ]; 
 
-        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
 
         if ( counter == array[ bucket + BTMP_CNTR ] ) {
 
+            if ( result.status == SH_OK ) {
+                long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+                copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
+            }
             break;
         }
     }
@@ -1353,7 +1425,7 @@ static sm_item_s remove_value(
         long bitmap = array[ bucket + BITMAP ];
         volatile long counter = array[ bucket + BTMP_CNTR ]; 
 
-        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index, buffer, buff_size );
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
 
         if ( counter != array[ bucket + BTMP_CNTR ] ) {
 
@@ -1366,6 +1438,7 @@ static sm_item_s remove_value(
         }
 
         long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+        (void) copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
         result.status = remove_from_bucket( array, hash, index, bucket, bitmap, counter );
         if ( result.status != SH_OK ) {
 
@@ -1688,6 +1761,108 @@ extern sm_item_s shr_map_get(
     guard_map_memory( map );
 
     sm_item_s result = find_value( map, key, klength, buffer, buff_size );
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+    shr_map_get_partial -- returns data of last vector field that begins at offset for
+    specified length that matches key
+
+    The function finds value that matches the key, and for the last vector field
+    reads the data beginning at offset specified for length specified along with
+    all the other fields in the vector.
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct is NULL, key pointer is NULL, 
+                        key length equals 0, buffer pointer address is NULL, pointer 
+                        to buff_size is NULL, or if buffer pointer is not NULL and buff_size is 0
+    SH_ERR_EMPTY        no items in map
+    SH_ERR_NO_MATCH     no value found that matches key 
+*/
+extern sm_item_s shr_map_get_partial(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    size_t offset,              // offset into last vector field to start read
+    size_t length,              // length of max read length
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+)   {
+
+    if (map == NULL ||
+        key == NULL ||
+        klength == 0 ||
+        buffer == NULL ||
+        buff_size == NULL ||
+        ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    if ( map->current->array[ COUNT ] == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_EMPTY };
+    }
+
+    guard_map_memory( map );
+
+    //TODO sm_item_s result = find_partial_value( map, key, klength, buffer, buff_size );
+    sm_item_s result; //TODO remove
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+    shr_map_get_attr -- returns length of vector and the lengths of each field 
+    in vector without any pointers to data
+
+    The function finds value that matches the key, and builds the vector with 
+    the field lengths without returning field data or initializing data pointers 
+    in vector fields.
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct is NULL, key pointer is NULL, 
+                        key length equals 0, buffer pointer address is NULL, pointer 
+                        to buff_size is NULL, or if buffer pointer is not NULL and buff_size is 0
+    SH_ERR_EMPTY        no items in map
+    SH_ERR_NO_MATCH     no value found that matches key 
+*/
+extern sm_item_s shr_map_get_attr(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+)   {
+
+    if (map == NULL ||
+        key == NULL ||
+        klength == 0 ||
+        buffer == NULL ||
+        buff_size == NULL ||
+        ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    if ( map->current->array[ COUNT ] == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_EMPTY };
+    }
+
+    guard_map_memory( map );
+
+    //TODO sm_item_s result = find_value_attr( map, key, klength, buffer, buff_size );
+    sm_item_s result; //TODO remove
 
     unguard_map_memory( map );
     return result;

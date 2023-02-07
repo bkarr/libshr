@@ -44,7 +44,7 @@ typedef struct  sq_item
     void *buffer;               // pointer to data buffer
     size_t buf_size;            // size of buffer
     int vcount;                 // vector count
-    sh_vec_s *vector;           // array of vectors
+    sh_vec_s *vector;           // array of vector fields
 } sq_item_s;
 
 /*==============================================================================
