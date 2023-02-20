@@ -1310,9 +1310,8 @@ static sm_item_s add_value_uniquely(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    void *value,                // pointer to value -- not NULL
-    size_t vlength,             // length of value -- greater than 0
-    sh_type_e type,             // data type
+    long data_slot,             // slot address of k/v pair
+    long size,                  // slot size of k/v pair
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
 
@@ -1320,22 +1319,11 @@ static sm_item_s add_value_uniquely(
 
     sm_item_s result = {0};
 
-    // allocate space and copy key/value pair
-    long size = 0;
-    long data_slot = copy_kv_pair( map, key, klength, value, vlength, type, &size );
-
-    if ( data_slot == 0 ) {
-        
-        return (sm_item_s) { .status = SH_ERR_NOMEM };
-    }
-
-    if ( data_slot < HDR_END ) {
-
-        return (sm_item_s) { .status = SH_ERR_STATE };
-    }
-
     result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
-    if ( result.status != SH_OK ) {
+    if (result.status == SH_OK) {
+        
+        (void) AFA( &map->current->array[ COUNT ], 1 );
+    } else {
 
         (void) free_data_slots( (shr_base_s*)map, data_slot );
     }
@@ -1711,7 +1699,21 @@ extern sm_item_s shr_map_add(
 
     guard_map_memory( map );
 
-    sm_item_s result = add_value_uniquely( map, key, klength, value, vlength, SH_STRM_T, buffer, buff_size );
+    // allocate space and copy key/value pair
+    long slot_count = 0;
+    long data_slot = copy_kv_pair( map, key, klength, value, vlength, SH_OBJ_T, &slot_count );
+
+    if ( data_slot == 0 ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    if ( data_slot < HDR_END ) {
+
+        return (sm_item_s) { .status = SH_ERR_STATE };
+    }
+
+    sm_item_s result = add_value_uniquely( map, key, klength, data_slot, slot_count, buffer, buff_size );
     if (result.status == SH_OK) {
         
         (void) AFA( &map->current->array[ COUNT ], 1 );
@@ -1768,8 +1770,8 @@ extern sm_item_s shr_map_get(
 
 
 /*
-    shr_map_get_partial -- returns data of last vector field that begins at offset for
-    specified length that matches key
+    shr_map_get_partial -- returns data for the indexed vector field that begins i
+    at offset for specified length that matches key
 
     The function finds value that matches the key, and for the last vector field
     reads the data beginning at offset specified for length specified along with
@@ -1788,7 +1790,8 @@ extern sm_item_s shr_map_get_partial(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    size_t offset,              // offset into last vector field to start read
+    int index,                  // index of field to read
+    size_t offset,              // offset into field to read
     size_t length,              // length of max read length
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL

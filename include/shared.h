@@ -82,16 +82,15 @@ typedef enum
 
 typedef enum
 {
-    SH_VECTOR_T = 0,        // vector of multiple types
-    SH_STRM_T,              // unspecified byte stream
+    SH_TUPLE_T = 0,         // tuple of multiple types
+    SH_OBJ_T,               // unspecified byte object
     SH_INTEGER_T,           // integer data type determined by length
     SH_FLOAT_T,             // floating point type determined by length
     SH_ASCII_T,             // ascii string (char values 0-127)
     SH_UTF8_T,              // utf-8 string
-    SH_UTF16_T,             // utf-16 string
+    SH_DICT_T,              // key/value pairs
     SH_JSON_T,              // json string
     SH_XML_T,               // xml string
-    SH_STRUCT_T,            // binary struct
 } sh_type_e;
 
 

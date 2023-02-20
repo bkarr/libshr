@@ -309,7 +309,7 @@ static long copy_vector(
         array[ current + TM_SEC ] = curr_time.tv_sec;
         array[ current + TM_NSEC ] = curr_time.tv_nsec;
         array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
-        array[ current + TYPE ] = SH_VECTOR_T;
+        array[ current + TYPE ] = SH_TUPLE_T;
         array[ current + VEC_CNT ] = vcnt;
         array[ current + DATA_LENGTH ] = ( space - DATA_HDR ) << SZ_SHIFT;
         long slot = current;
@@ -1996,7 +1996,7 @@ extern sh_status_e shr_q_add(
         return status;
     }
 
-    status = enq( q, value, length, SH_STRM_T );
+    status = enq( q, value, length, SH_OBJ_T );
 
     if ( status ) {
 
@@ -2060,7 +2060,7 @@ extern sh_status_e shr_q_add_wait(
         return status;
     }
 
-    status = enq( q, value, length, SH_STRM_T );
+    status = enq( q, value, length, SH_OBJ_T );
 
     if ( status != SH_OK ) {
 
@@ -2126,7 +2126,7 @@ extern sh_status_e shr_q_add_timedwait(
         return status;
     }
 
-    status = enq( q, value, length, SH_STRM_T );
+    status = enq( q, value, length, SH_OBJ_T );
     if ( status ) {
 
         enq_release_gate( q );
