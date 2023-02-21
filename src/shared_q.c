@@ -287,7 +287,8 @@ static long copy_vector(
 
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 2
+    int vcnt,           // count of vector array -- must be >= 2
+    sh_type_e type      // type represented by vector
 
 )   {
 
@@ -309,7 +310,7 @@ static long copy_vector(
         array[ current + TM_SEC ] = curr_time.tv_sec;
         array[ current + TM_NSEC ] = curr_time.tv_nsec;
         array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
-        array[ current + TYPE ] = SH_TUPLE_T;
+        array[ current + TYPE ] = type;
         array[ current + VEC_CNT ] = vcnt;
         array[ current + DATA_LENGTH ] = ( space - DATA_HDR ) << SZ_SHIFT;
         long slot = current;
@@ -712,7 +713,7 @@ static sh_status_e enq(
     shr_q_s *q,         // pointer to queue, not NULL
     void *value,        // pointer to item, not NULL
     size_t length,      // length of item
-    sh_type_e type      // data type
+    sh_type_e type      // data type 
 
 )   {
 
@@ -742,7 +743,8 @@ static sh_status_e enqv(
 
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 2
+    int vcnt,           // count of vector array -- must be >= 2
+    sh_type_e type      // data type represented by vector 
 
 )   {
 
@@ -753,7 +755,7 @@ static sh_status_e enqv(
 
     long data_slot;
     // allocate space and copy vector
-    data_slot = copy_vector( q, vector, vcnt );
+    data_slot = copy_vector( q, vector, vcnt, type );
 
     if ( data_slot < 0 ) {
 
@@ -2165,7 +2167,8 @@ extern sh_status_e shr_q_addv(
 
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 1
+    int vcnt,           // count of vector array -- must be >= 1
+    sh_type_e repr      // type represented by vector
 
 )   {
 
@@ -2194,7 +2197,7 @@ extern sh_status_e shr_q_addv(
 
     } else {
 
-        status = enqv( q, vector, vcnt );
+        status = enqv( q, vector, vcnt, repr );
     }
 
     if ( status ) {
@@ -2234,7 +2237,8 @@ extern sh_status_e shr_q_addv_wait(
 
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 1
+    int vcnt,           // count of vector array -- must be >= 1
+    sh_type_e repr      // type represented by vector
 
 )   {
 
@@ -2263,7 +2267,7 @@ extern sh_status_e shr_q_addv_wait(
 
     } else {
 
-        status = enqv( q, vector, vcnt) ;
+        status = enqv( q, vector, vcnt, repr) ;
     }
 
     if ( status ) {
@@ -2308,6 +2312,7 @@ extern sh_status_e shr_q_addv_timedwait(
     shr_q_s *q,                 // pointer to queue struct -- not NULL
     sh_vec_s *vector,           // pointer to vector of items -- not NULL
     int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
     struct timespec *timeout    // timeout value -- not NULL
 
 )   {
@@ -2337,7 +2342,7 @@ extern sh_status_e shr_q_addv_timedwait(
 
     } else {
 
-        status = enqv( q, vector, vcnt );
+        status = enqv( q, vector, vcnt, repr );
     }
 
     if ( status != SH_OK ) {

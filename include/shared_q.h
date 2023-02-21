@@ -122,14 +122,16 @@ extern sh_status_e shr_q_add_timedwait(
 extern sh_status_e shr_q_addv(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 1
+    int vcnt,           // count of vector array -- must be >= 1
+    sh_type_e repr      // type represented by vector
 );
 
 
 extern sh_status_e shr_q_addv_wait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 1
+    int vcnt,           // count of vector array -- must be >= 1
+    sh_type_e repr      // type represented by vector
 );
 
 
@@ -137,6 +139,7 @@ extern sh_status_e shr_q_addv_timedwait(
     shr_q_s *q,         // pointer to queue struct -- not NULL
     sh_vec_s *vector,   // pointer to vector of items -- not NULL
     int vcnt,           // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
     struct timespec *timeout    // timeout value -- not NULL
 );
 
