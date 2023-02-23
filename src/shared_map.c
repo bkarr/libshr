@@ -769,6 +769,37 @@ static void initialize_item_vector(
 }
 
 
+static void initialize_item_attr(
+
+    sm_item_s *item,    // pointer to item -- not NULL
+    uint8_t *current    // current data pointer
+
+)   {
+
+    for ( int i = 0; i < item->vcount; i++ ) {
+
+        item->vector[ i ].type = (sh_type_e) *(long*) current;
+        current += sizeof(long);
+        item->vector[ i ].len = *(long*) current;
+        current += sizeof(long);
+
+        if ( item->vector[ i ].len <= sizeof(long) ) {
+
+            current += sizeof(long);
+
+        } else {
+
+            current += ( item->vector[ i ].len >> SZ_SHIFT ) << SZ_SHIFT;
+
+            if ( item->vector[ i ].len & REM ) {
+
+                current += sizeof(long);
+            }
+        }
+    }
+}
+
+
 static void copy_to_buffer(
 
     long *array,        // pointer to map array -- not NULL
@@ -790,7 +821,7 @@ static void copy_to_buffer(
     long offset = DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
     memcpy( *buffer, &array[ data_slot + offset ], size );
     item->buffer = *buffer;
-    item->buf_size = size;
+    item->buf_size = *buff_size;
     item->type = pair_type( array, data_slot );
     item->vlength = array[ data_slot + DATA_LENGTH ];
     item->value = (uint8_t*) *buffer;
@@ -806,6 +837,44 @@ static void copy_to_buffer(
     } else {
 
         initialize_item_vector( item );
+    }
+}
+
+
+static void copy_attr_to_buffer(
+
+    long *array,        // pointer to map array -- not NULL
+    long data_slot,     // data item index
+    sm_item_s *item,    // pointer to item -- not NULL
+    void **buffer,      // address of buffer pointer, or NULL
+    size_t *buff_size   // pointer to length of buffer if buffer present
+
+)   {
+
+    sh_status_e status = resize_buffer( array, data_slot, buffer, buff_size, 0 );
+    if ( status != SH_OK ) {
+
+        item->status = SH_ERR_NOMEM;
+        return;
+    }
+
+    item->buffer = *buffer;
+    item->buf_size = *buff_size;
+    item->type = pair_type( array, data_slot );
+    item->vlength = array[ data_slot + DATA_LENGTH ];
+    item->value = NULL;
+    item->vcount = pair_vec_count( array, data_slot );
+    item->vector = (sh_vec_s*) *buffer;
+
+    if ( item->vcount == 1 ) {
+
+        item->vector[ 0 ].type = item->type;
+        item->vector[ 0 ].len = item->vlength;
+
+    } else {
+
+        long offset = DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
+        initialize_item_attr( item, (uint8_t*)&array[ data_slot + offset ] );
     }
 }
 
@@ -1413,7 +1482,7 @@ static sm_item_s hash_add(
                 continue;
             }
 
-            //TODO evict_bucket( map, hash, &empty, &bitmap, &counter );
+            //TODO pair_slot = evict_bucket( map, hash, &empty, &bitmap, &counter );
         }
 
         result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
@@ -1493,8 +1562,59 @@ static sm_item_s find_value(
         if ( counter == array[ bucket + BTMP_CNTR ] ) {
 
             if ( result.status == SH_OK ) {
+
                 long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
                 copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
+            }
+            break;
+        }
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
+
+static sm_item_s find_value_attr(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            bucket = ( ( hash & ( array[ PREV_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ PREV_IDX ];
+            reindex_bucket(map, bucket ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        volatile long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
+
+        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+
+            if ( result.status == SH_OK ) {
+
+                long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+                copy_attr_to_buffer( array, pair_slot, &result, buffer, buff_size );
             }
             break;
         }
@@ -1966,6 +2086,7 @@ extern sm_item_s shr_map_get(
     SH_ERR_NO_MATCH     no value found that matches key 
 */
 extern sm_item_s shr_map_get_partial(
+
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
@@ -1974,7 +2095,8 @@ extern sm_item_s shr_map_get_partial(
     size_t length,              // length of max read length
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
-)   {
+
+    )   {
 
     if (map == NULL ||
         key == NULL ||
@@ -2019,19 +2141,18 @@ extern sm_item_s shr_map_get_partial(
     SH_ERR_NO_MATCH     no value found that matches key 
 */
 extern sm_item_s shr_map_get_attr(
+
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
+
 )   {
 
-    if (map == NULL ||
-        key == NULL ||
-        klength == 0 ||
-        buffer == NULL ||
-        buff_size == NULL ||
-        ( *buffer != NULL && *buff_size == 0 ) ) {
+    if ( map == NULL ||
+         key == NULL ||
+         klength == 0 ) {
 
         return (sm_item_s) { .status = SH_ERR_ARG };
     }
@@ -2043,8 +2164,7 @@ extern sm_item_s shr_map_get_attr(
 
     guard_map_memory( map );
 
-    //TODO sm_item_s result = find_value_attr( map, key, klength, buffer, buff_size );
-    sm_item_s result; //TODO remove
+    sm_item_s result = find_value_attr( map, key, klength, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
