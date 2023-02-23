@@ -72,6 +72,7 @@ extern sm_item_s shr_map_addv(
     size_t klength,             // length of key -- greater than 0
     sh_vec_s *vector,           // pointer to vector of items -- not NULL
     int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
 );

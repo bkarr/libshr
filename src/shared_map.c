@@ -611,6 +611,96 @@ static long copy_kv_pair(
 }
 
 
+static long calc_vector_slots(
+
+    sh_vec_s *vector,   // pointer to vector of items -- not NULL
+    int vcnt            // count of vector array -- must be >= 2
+
+)   {
+
+    long space = 0;
+
+    for( int i = 0; i < vcnt; i++ ) {
+
+        // increment for embedded for type and data length
+        space += 2;
+        // calculate number of slots needed for data
+        space += (vector[i].len >> SZ_SHIFT);
+
+        // account for remainder
+        if (vector[i].len & REM) {
+
+            space += 1;
+        }
+    }
+
+    return space;
+}
+
+
+
+static long copy_kv_vector(
+
+    shr_map_s *map,     // pointer to map struct
+    uint8_t *key,       // pointer to key -- not NULL
+    size_t klength,     // length of key -- greater than 0
+    sh_vec_s *vector,   // pointer to vector of items -- not NULL
+    int vcnt,           // count of vector array -- must be >= 2
+    sh_type_e type,     // type represented by vector
+    long *size          // total size of data in slots
+
+)   {
+
+    if ( map == NULL || vector == NULL || vcnt < 2 ) {
+
+        return -1;
+    }
+
+    long kslots = calc_data_slots( klength );
+    long vslots = calc_vector_slots( vector, vcnt );
+    long space = DATA_HDR + kslots + vslots;
+    update_buffer_size( map->current->array, space, vcnt * sizeof(sh_vec_s) );
+    view_s view = alloc_data_slots( (shr_base_s*)map, space );
+    long current = view.slot;
+
+    if ( current >= HDR_END ) {
+
+        long *array = view.extent->array;
+        *size = array[ current ];
+        array[ current + TYPE_VEC ] = ( (long)type << 32) | vcnt;
+        array[ current + DATA_LENGTH ] = vslots << SZ_SHIFT;
+        array[ current + KEY_LENGTH ] = klength;
+        memcpy( &array[ current + DATA_HDR ], key, klength );
+        long slot = current;
+        slot += DATA_HDR;
+        slot += kslots;
+
+        for ( int i = 0; i < vcnt; i++ ) {
+
+            if ( vector[i].type <= 0 ||
+                 vector[i].len <= 0  ||
+                 vector[i].base == NULL ) {
+
+                return -1;
+            }
+
+            array[ slot++ ] = vector[ i ].type;
+            array[ slot++ ] = vector[ i ].len;
+            memcpy( &array[ slot ], vector[ i ].base, vector[ i ].len );
+            slot += vector[ i ].len >> SZ_SHIFT;
+
+            if ( vector[ i ].len & REM ) {
+
+                slot++;
+            }
+        }
+    }
+
+    return current;
+}
+
+
+
 static sh_status_e resize_buffer(
 
     long *array,        // pointer to map array
@@ -643,6 +733,39 @@ static sh_status_e resize_buffer(
     }
 
     return SH_OK;
+}
+
+
+static void initialize_item_vector(
+
+    sm_item_s *item     // pointer to item -- not NULL
+
+)   {
+
+    uint8_t *current = (uint8_t*) item->value;
+
+    for ( int i = 0; i < item->vcount; i++ ) {
+
+        item->vector[ i ].type = (sh_type_e) *(long*) current;
+        current += sizeof(long);
+        item->vector[ i ].len = *(long*) current;
+        current += sizeof(long);
+        item->vector[ i ].base = current;
+
+        if ( item->vector[ i ].len <= sizeof(long) ) {
+
+            current += sizeof(long);
+
+        } else {
+
+            current += ( item->vector[ i ].len >> SZ_SHIFT ) << SZ_SHIFT;
+
+            if ( item->vector[ i ].len & REM ) {
+
+                current += sizeof(long);
+            }
+        }
+    }
 }
 
 
@@ -682,7 +805,7 @@ static void copy_to_buffer(
 
     } else {
 
-        //TODO initialize_item_vector( item );
+        initialize_item_vector( item );
     }
 }
 
@@ -1323,6 +1446,7 @@ static sm_item_s add_value_uniquely(
     if (result.status == SH_OK) {
         
         (void) AFA( &map->current->array[ COUNT ], 1 );
+
     } else {
 
         (void) free_data_slots( (shr_base_s*)map, data_slot );
@@ -1437,6 +1561,7 @@ static sm_item_s remove_value(
 
             // add k/v memory to defer list
             result.status = release_pair( map, pair_slot );
+
         } else {
         
             // release uncontended k/v memory
@@ -1522,8 +1647,8 @@ extern sh_status_e shr_map_create(
 
         free( *map );
         *map = NULL;
-    }
-    else {
+    
+    } else {
 
         (*map)->seed = (*map)->current->array[ SEED ];
     }
@@ -1668,10 +1793,11 @@ extern sh_status_e shr_map_close(
 
     returns sh_status_e:
 
-    SH_OK       on success
-    SH_ERR_ARG  if pointer to map struct, key, or value is NULL, key length
-                or value length equals 0, or if buffer address or buff_size
-                pointer is NULL, or if buffer is not NULL and buff_size is 0
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
+                    or value length equals 0, or if buffer address or buff_size
+                    pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	failed memory allocation
 */
 extern sm_item_s shr_map_add(
 
@@ -1699,29 +1825,82 @@ extern sm_item_s shr_map_add(
 
     guard_map_memory( map );
 
-    // allocate space and copy key/value pair
     long slot_count = 0;
     long data_slot = copy_kv_pair( map, key, klength, value, vlength, SH_OBJ_T, &slot_count );
-
-    if ( data_slot == 0 ) {
+    if ( data_slot < HDR_END ) {
         
         return (sm_item_s) { .status = SH_ERR_NOMEM };
     }
 
-    if ( data_slot < HDR_END ) {
-
-        return (sm_item_s) { .status = SH_ERR_STATE };
-    }
-
     sm_item_s result = add_value_uniquely( map, key, klength, data_slot, slot_count, buffer, buff_size );
-    if (result.status == SH_OK) {
-        
-        (void) AFA( &map->current->array[ COUNT ], 1 );
-    }
 
     unguard_map_memory( map );
     return result;
 }
+
+
+/*
+    shr_map_addv -- add a key/vector of values pair to the map uniquely
+
+    The shr_map_add function will attempt to add an item to the map and will 
+    succeed only if an item associated with the key is not already in the map.
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
+                    or value length equals 0, or if buffer address or buff_size
+                    pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	failed memory allocation
+*/
+extern sm_item_s shr_map_addv(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    sh_vec_s *vector,           // pointer to vector of items -- not NULL
+    int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+)   {
+
+    if ( map == NULL || 
+         key == NULL || 
+         klength == 0 || 
+         vector == NULL || 
+         vcnt < 1 || 
+         buffer == NULL ||
+         buff_size == NULL || 
+         ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    guard_map_memory( map );
+
+    long slot_count = 0;
+    long data_slot = 0;
+
+    if ( vcnt == 1 ) {
+        
+        data_slot = copy_kv_pair( map, key, klength, vector[ 0 ].base, vector[ 0 ].len, vector[ 0 ].type, &slot_count );
+    
+    } else {
+
+        data_slot = copy_kv_vector( map, key, klength, vector, vcnt, repr, &slot_count );
+    }
+
+    if ( data_slot < HDR_END ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    sm_item_s result = add_value_uniquely( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    unguard_map_memory( map );
+    return result;
+}
+
 
 /*
     shr_map_get -- return value that matches key or a status of no match

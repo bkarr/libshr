@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2015-2022 Bryan Karr
+Copyright (c) 2015-2023 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -275,7 +275,7 @@ static long calc_vector_slots(
         // account for remainder
         if (vector[i].len & REM) {
 
-            space += 2;
+            space += 1;
         }
     }
 
@@ -319,8 +319,8 @@ static long copy_vector(
         for ( int i = 0; i < vcnt; i++ ) {
 
             if ( vector[i].type <= 0 ||
-                vector[i].len <= 0  ||
-                vector[i].base == NULL ) {
+                 vector[i].len <= 0  ||
+                 vector[i].base == NULL ) {
 
                 return -1;
             }
