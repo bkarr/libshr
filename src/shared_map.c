@@ -417,6 +417,11 @@ static bool is_at_limit(
 
 )   {
 
+    if (map->current->array[ MAX_SIZE ] == 0 ) {
+    
+        return false;
+    }
+
     return ( map->current->array[ SIZE ] >= map->current->array[ MAX_SIZE ] );
 }
 
@@ -1022,6 +1027,7 @@ static void reindex_bucket(
 
     long *array = map->current->array;
     long mask = 1;
+    int counter = 0;
 
     // first potentially uncontended pass
     for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
@@ -1032,6 +1038,8 @@ static void reindex_bucket(
             
             continue;            
         }
+
+        counter++;
 
         // clear bit for item to know initial reindex is uncontended
         DWORD before = { .low = bit_map, .high = array[ bucket + BTMP_CNTR ] };
@@ -1051,29 +1059,33 @@ static void reindex_bucket(
 
     // second pass to help blocked threads complete reindexing
     // and insuring entire bucket is cleared
-    for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
+    if ( !( array[ bucket ] & 1 ) && counter < BUCKET_COUNT ) {
 
-        long slot = bucket + ( i * INDEX_ITEM );
-        if ( array[ slot + DATA_SLOT ] == 0 ) {
+        for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
 
-            continue;
+            long slot = bucket + ( i * INDEX_ITEM );
+            if ( array[ slot + DATA_SLOT ] == 0 ) {
+
+                continue;
+            }
+
+            reindex_pair( map, slot );
+            array[ slot + DATA_SLOT ] = 0;
+            array[ slot + DATA_CNTR ] = 0;
+            array[ slot + HASH ] = 0;
+            array[ slot + ITEM_LENGTH ] = 0;
         }
-
-        reindex_pair( map, slot );
-        array[ slot + DATA_SLOT ] = 0;
-        array[ slot + DATA_CNTR ] = 0;
-        array[ slot + HASH ] = 0;
-        array[ slot + ITEM_LENGTH ] = 0;
     }
 
-    if ( array[ bucket + BTMP_CNTR ] == 1 ) {
+
+    if ( array[ bucket ] & 1 ) {
     
         return;
     }
 
     // mark bucket as fully reindexed
-    DWORD before = { .low = 0, .high = array[ bucket + BTMP_CNTR ] };
-    DWORD after = { .low = 1, .high = before.high + 1 };
+    DWORD before = { .low = array[ bucket ], .high = array[ bucket + BTMP_CNTR ] };
+    DWORD after = { .low = before.low | 1, .high = before.high + 1 };
     (void) DWCAS( (DWORD*)&array[ bucket ], &before, after );
 }
 
@@ -1088,43 +1100,37 @@ static sh_status_e reindex_indices(
     long buckets = array[ PREV_BKT_CNT ];
     long prev = array[ PREV_IDX ];
     long rehash  = array[ prev + REHASH_BKT ];
+    long start = rehash;
     
     if ( prev == array[ CURRENT_IDX ] ) {
     
         return SH_OK;
     }
 
-    // insure at least one thread works each bucket
     for (long i = rehash; i < buckets; i++ ) {
         
-        if ( rehash != i || !CAS( &array[ REHASH_BKT ], &rehash, i + 1 ) ) {
-
-            rehash = array[ prev + REHASH_BKT ];
-            continue;
-        }
+        array[ prev + REHASH_BKT ] = i + 1;
 
         long bucket = prev + ( i * BUCKET_SIZE );
         view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
         array = view.extent->array;
 
-        if ( array[ bucket ] == 1 ) {
+        if ( array[ bucket ] & 1 ) {
             
-            rehash = array[ prev + REHASH_BKT ];
             continue;
         }
 
         reindex_bucket( map, bucket );
-        rehash = array[ prev + REHASH_BKT ];
+        i = array[ prev + REHASH_BKT ] - 1;
     }
 
-    // help other threads work unfinished buckets
-    for (long i = 0; i < buckets; i++ ) {
+    for (long i = 0; i < start; i++ ) {
         
         long bucket = prev + ( i * BUCKET_SIZE );
         view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
         array = view.extent->array;
 
-        if ( array[ bucket ] == 1 ) {
+        if ( array[ bucket ] & 1 ) {
             
             continue;
         }
@@ -1185,24 +1191,23 @@ static sh_status_e allocate_new_index(
     (void) CAS( &array[ current_idx ], &prev, block );
 
     // allocate new index structure
-    DWORD before = { .high = array[ current_idx ], .low = array[ PREV_BKT_CNT ] };
-    long new_bkt_cnt = before.low << 1; 
-    view_s view = alloc_data_slots( (shr_base_s*)map, new_bkt_cnt );
+    DWORD before = { .low = array[ CURRENT_IDX ], .high = array[ CRNT_BKT_CNT ] };
+    long new_bkt_cnt = before.high << 1; 
+    view_s view = alloc_data_slots( (shr_base_s*)map, new_bkt_cnt * BUCKET_SIZE );
     if ( view.slot == 0 ) {
 
         return SH_ERR_NOMEM;
     }
-
     array = view.extent->array;
-    new_bkt_cnt = array[ view.slot ];
-    array[ view.slot ] = 0;
+    array[view.slot] = 0;       // clear memory block size
 
     // replace current index with expanded
     DWORD after = { .low = view.slot, .high = new_bkt_cnt };
     if ( DWCAS( (DWORD*)&array[ CURRENT_IDX ], &before, after ) ) {
 
-        long rehash = array[ current_idx + REHASH_BKT ];
-        (void) CAS( &array[ current_idx + REHASH_BKT ], &rehash, 0 );
+        long prev_idx = array[ PREV_IDX ];
+        long rehash = array[ prev_idx + REHASH_BKT ];
+        (void) CAS( &array[ prev_idx + REHASH_BKT ], &rehash, 0 );
 
     } else {
 
@@ -1247,6 +1252,7 @@ static sh_status_e release_prev_index(
 
     long *array = map->current->array;
     long prev = array [ PREV_IDX ];
+    long prev_count = array[ PREV_BKT_CNT ];
 
     if ( prev == array[ CURRENT_IDX ] ) {
        
@@ -1254,8 +1260,8 @@ static sh_status_e release_prev_index(
     }
 
     // remove previous index by making same as current
-    DWORD before = { .high = prev, .low = array[ PREV_BKT_CNT ] };
-    DWORD after = { .high = array[ CURRENT_IDX ], .low = array[ CRNT_BKT_CNT] };
+    DWORD before = { .low = prev, .high = prev_count };
+    DWORD after = { .low = array[ CURRENT_IDX ], .high = array[ CRNT_BKT_CNT] };
     if ( !DWCAS( (DWORD*)&array[ PREV_IDX ], &before, after ) ) {
     
         return SH_OK;
@@ -1271,8 +1277,8 @@ static sh_status_e release_prev_index(
 
     // update list node with memory info
     array = view.extent->array;
-    array[ view.slot + SLOT_OFFSET ] = array[ PREV_IDX ];
-    array[ view.slot + SIZE_OFFSET ] = array[ PREV_BKT_CNT * BUCKET_SIZE ];
+    array[ view.slot + SLOT_OFFSET ] = prev;
+    array[ view.slot + SIZE_OFFSET ] = prev_count * BUCKET_SIZE ;
 
     // append node to end of defer list
     add_end( (shr_base_s*)map, view.slot, DEFER_TAIL );
@@ -1369,7 +1375,7 @@ static sm_item_s scan_for_match(
         }
 
         volatile long data_slot = array[ item + DATA_SLOT ];
-        long length = array[ data_slot + TOTAL_SLOTS ];
+        volatile long length = array[ data_slot + TOTAL_SLOTS ];
         if ( data_slot == 0 || length == 0 ) {
         
             // update of k/v pair detected -- restart bucket loop
@@ -1386,6 +1392,7 @@ static sm_item_s scan_for_match(
             continue;
         }
         
+        //TODO figure out why I thought I needed this check a second time
         if (counter != array[ item + DATA_CNTR ] ) {
         
             // update of k/v pair detected -- restart bucket loop
@@ -1479,6 +1486,7 @@ static sm_item_s hash_add(
             result.status = expand_hash_index( map );
             if (result.status == SH_OK) {
 
+                bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
                 continue;
             }
 
@@ -1676,6 +1684,8 @@ static sm_item_s remove_value(
 
             continue;
         }
+
+        (void) AFS( &map->current->array[ COUNT ], 1 );
 
         if ( is_bucket_contended( array, bucket ) ) {
 
