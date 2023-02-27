@@ -846,6 +846,50 @@ static void copy_to_buffer(
 }
 
 
+static void copy_to_buffer_select(
+
+    long *array,        // pointer to map array -- not NULL
+    long data_slot,     // data item index
+    sm_item_s *item,    // pointer to item -- not NULL
+    int index,          // index of field to read
+    size_t offset,      // offset into field to read
+    size_t length,      // length of max read length
+    void **buffer,      // address of buffer pointer, or NULL
+    size_t *buff_size   // pointer to length of buffer if buffer present
+
+)   {
+
+    long size = array[ data_slot + DATA_LENGTH ];
+    sh_status_e status = resize_buffer( array, data_slot, buffer, buff_size, size );
+    if ( status != SH_OK ) {
+
+        item->status = SH_ERR_NOMEM;
+        return;
+    }
+
+    long data_field_offset = DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
+    memcpy( *buffer, &array[ data_slot + data_field_offset ], size );
+    item->buffer = *buffer;
+    item->buf_size = *buff_size;
+    item->type = pair_type( array, data_slot );
+    item->vlength = array[ data_slot + DATA_LENGTH ];
+    item->value = (uint8_t*) *buffer;
+    item->vcount = pair_vec_count( array, data_slot );
+    item->vector = (sh_vec_s*) ( (uint8_t*) *buffer + size );
+
+    if ( item->vcount == 1 ) {
+
+        item->vector[ 0 ].type = item->type;
+        item->vector[ 0 ].len = item->vlength;
+        item->vector[ 0 ].base = item->value;
+
+    } else {
+
+        initialize_item_vector( item );
+    }
+}
+
+
 static void copy_attr_to_buffer(
 
     long *array,        // pointer to map array -- not NULL
@@ -1583,6 +1627,59 @@ static sm_item_s find_value(
 }
 
 
+static sm_item_s find_select_value(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    int index,                  // index of field to read
+    size_t offset,              // offset into field to read
+    size_t length,              // length of max read length
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            bucket = ( ( hash & ( array[ PREV_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ PREV_IDX ];
+            reindex_bucket(map, bucket ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        volatile long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
+
+        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+
+            if ( result.status == SH_OK ) {
+
+                long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+                copy_to_buffer_select( array, pair_slot, &result, index, offset, length, buffer, buff_size );
+            }
+            break;
+        }
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
+
 static sm_item_s find_value_attr(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -2079,12 +2176,11 @@ extern sm_item_s shr_map_get(
 
 
 /*
-    shr_map_get_partial -- returns data for the indexed vector field that begins i
+    shr_map_get_select -- returns data for the indexed vector field that begins i
     at offset for specified length that matches key
 
-    The function finds value that matches the key, and for the last vector field
-    reads the data beginning at offset specified for length specified along with
-    all the other fields in the vector.
+    The function finds value that matches the key, and for the specified indexed  
+    vector field reads the data beginning at offset for length specified. 
 
     returns sh_status_e:
 
@@ -2095,7 +2191,7 @@ extern sm_item_s shr_map_get(
     SH_ERR_EMPTY        no items in map
     SH_ERR_NO_MATCH     no value found that matches key 
 */
-extern sm_item_s shr_map_get_partial(
+extern sm_item_s shr_map_get_select(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
@@ -2125,8 +2221,7 @@ extern sm_item_s shr_map_get_partial(
 
     guard_map_memory( map );
 
-    //TODO sm_item_s result = find_partial_value( map, key, klength, buffer, buff_size );
-    sm_item_s result; //TODO remove
+    sm_item_s result = find_select_value( map, key, klength, index, offset, length, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;

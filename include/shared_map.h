@@ -87,7 +87,7 @@ extern sm_item_s shr_map_get(
 );
 
 
-extern sm_item_s shr_map_get_partial(
+extern sm_item_s shr_map_get_select(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
