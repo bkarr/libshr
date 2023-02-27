@@ -1,6 +1,11 @@
 #Core files
 core*
 
+#vim files
+*~
+*.swp
+*.swo
+
 #Tag files
 tags
 
