@@ -595,7 +595,7 @@ static long copy_kv_pair(
     long kslots = calc_data_slots( klength );
     long vslots = calc_data_slots( vlength );
     long space = DATA_HDR + kslots + vslots;
-    update_buffer_size( map->current->array, vslots, sizeof(sh_vec_s) );
+    update_buffer_size( map->current->array, vslots, sizeof( sh_vec_s ) );
     view_s view = alloc_data_slots( (shr_base_s*)map, space );
     long current = view.slot;
 
@@ -605,7 +605,7 @@ static long copy_kv_pair(
 
         long *array = view.extent->array;
         *size = array[ current ];
-        array[ current + TYPE_VEC ] = ( (long)type << 32) | 1;
+        array[ current + TYPE_VEC ] = ( ( long ) type << 32) | 1;
         array[ current + DATA_LENGTH ] = vlength;
         array[ current + KEY_LENGTH ] = klength;
         memcpy( &array[ current + DATA_HDR ], key, klength );
@@ -716,7 +716,12 @@ static sh_status_e resize_buffer(
 
 )   {
 
-    long total = size + ( pair_vec_count( array, data_slot ) * sizeof(sh_vec_s) );
+    long total = size;
+    if ( data_slot > 0 ) { 
+
+        total += ( pair_vec_count( array, data_slot ) * sizeof(sh_vec_s) );
+    
+    } 
 
     if ( *buffer && *buff_size < total ) {
 
@@ -805,6 +810,52 @@ static void initialize_item_attr(
 }
 
 
+static long advance_to_field(
+
+    long *array,            // pointer to map array -- not NULL
+    long data_slot,         // data start index
+    int vcount,             // vector count
+    int ordinal             // selected field
+
+)   {
+
+    if ( ordinal < 0 || ordinal >= vcount ) {
+    
+        return -1;
+    }
+
+    uint8_t *current = ( uint8_t * ) &array[ data_slot ];
+
+    int i = 0;
+    for ( ; i < ordinal; i++ ) {
+
+        current += sizeof( long );
+        long len = *( long * ) current;
+        current += sizeof( long );
+        data_slot += 2;
+
+        if ( len <= sizeof( long ) ) {
+
+            current += sizeof( long );
+            data_slot++;
+
+        } else {
+
+            current += ( len >> SZ_SHIFT ) << SZ_SHIFT;
+            data_slot += ( len >> SZ_SHIFT );
+
+            if ( len & REM ) {
+
+                current += sizeof( long );
+                data_slot++;
+            }
+        }
+    }
+
+    return data_slot;
+}
+
+
 static void copy_to_buffer(
 
     long *array,        // pointer to map array -- not NULL
@@ -829,9 +880,9 @@ static void copy_to_buffer(
     item->buf_size = *buff_size;
     item->type = pair_type( array, data_slot );
     item->vlength = array[ data_slot + DATA_LENGTH ];
-    item->value = (uint8_t*) *buffer;
+    item->value = ( uint8_t * ) *buffer;
     item->vcount = pair_vec_count( array, data_slot );
-    item->vector = (sh_vec_s*) ( (uint8_t*) *buffer + size );
+    item->vector = (sh_vec_s*) ( ( uint8_t * ) *buffer + size );
 
     if ( item->vcount == 1 ) {
 
@@ -851,7 +902,7 @@ static void copy_to_buffer_select(
     long *array,        // pointer to map array -- not NULL
     long data_slot,     // data item index
     sm_item_s *item,    // pointer to item -- not NULL
-    int index,          // index of field to read
+    int ordinal,        // ordinal of vector field to read
     size_t offset,      // offset into field to read
     size_t length,      // length of max read length
     void **buffer,      // address of buffer pointer, or NULL
@@ -859,34 +910,56 @@ static void copy_to_buffer_select(
 
 )   {
 
-    long size = array[ data_slot + DATA_LENGTH ];
-    sh_status_e status = resize_buffer( array, data_slot, buffer, buff_size, size );
+    sh_status_e status = resize_buffer( array, 0, buffer, buff_size, length );
     if ( status != SH_OK ) {
 
         item->status = SH_ERR_NOMEM;
         return;
     }
 
-    long data_field_offset = DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
-    memcpy( *buffer, &array[ data_slot + data_field_offset ], size );
     item->buffer = *buffer;
     item->buf_size = *buff_size;
-    item->type = pair_type( array, data_slot );
-    item->vlength = array[ data_slot + DATA_LENGTH ];
-    item->value = (uint8_t*) *buffer;
-    item->vcount = pair_vec_count( array, data_slot );
-    item->vector = (sh_vec_s*) ( (uint8_t*) *buffer + size );
+    item->value = ( uint8_t * ) *buffer;
+    item->vcount = 0;
 
-    if ( item->vcount == 1 ) {
 
-        item->vector[ 0 ].type = item->type;
-        item->vector[ 0 ].len = item->vlength;
-        item->vector[ 0 ].base = item->value;
+    int vcount = pair_vec_count( array, data_slot );
+    long data_start = data_slot + DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
+    long selected_field = advance_to_field( array, data_start, vcount, ordinal );
+    if ( selected_field < 0 ) {
+    
+        item->status = SH_ERR_BOUNDS;
+        return;
+    }
+
+    size_t copy_length = length;
+    if ( length > *buff_size ) {
+    
+        copy_length = *buff_size;
+    }
+    item->vlength = copy_length;
+
+    size_t field_length;
+    uint8_t *src;
+    if ( vcount == 1 )  { 
+
+        field_length = array[ data_slot + DATA_LENGTH ];
+        item->type = pair_type( array, data_slot ); 
+        src = ( uint8_t * ) &array[ selected_field ];
 
     } else {
 
-        initialize_item_vector( item );
+        field_length = array[ selected_field + 1 ];
+        item->type = array[ selected_field ];
+        src = ( uint8_t * ) &array[ selected_field + 2 ];
     }
+
+    if ( offset + copy_length > field_length ) {
+
+        copy_length = copy_length - ( ( offset + copy_length ) - field_length );
+    }
+
+    memcpy( *buffer, src + offset, copy_length );
 }
 
 
@@ -923,7 +996,7 @@ static void copy_attr_to_buffer(
     } else {
 
         long offset = DATA_HDR + calc_data_slots( array[ data_slot + KEY_LENGTH ] );
-        initialize_item_attr( item, (uint8_t*)&array[ data_slot + offset ] );
+        initialize_item_attr( item, ( uint8_t * )&array[ data_slot + offset ] );
     }
 }
 
@@ -951,7 +1024,7 @@ static sh_status_e add_to_bucket(
 
     array[ slot + HASH ] = hash;
     array[ slot + ITEM_LENGTH ] = pair_size;
-    before.low = bitmap & (long)IDX_BLOCK;
+    before.low = bitmap & ( long ) IDX_BLOCK;
     before.high = counter;
     after.low = bitmap | ( 1 << empty );
     after.high = before.high + 1;
@@ -1130,7 +1203,7 @@ static void reindex_bucket(
     // mark bucket as fully reindexed
     DWORD before = { .low = array[ bucket ], .high = array[ bucket + BTMP_CNTR ] };
     DWORD after = { .low = before.low | 1, .high = before.high + 1 };
-    (void) DWCAS( (DWORD*)&array[ bucket ], &before, after );
+    ( void ) DWCAS( (DWORD*)&array[ bucket ], &before, after );
 }
 
  
@@ -1231,8 +1304,8 @@ static sh_status_e allocate_new_index(
 
     // block new adds
     long prev = array[ current_idx ];
-    long block = ( (uint64_t)IDX_BLOCK << 32 ) | prev;
-    (void) CAS( &array[ current_idx ], &prev, block );
+    long block = ( ( uint64_t ) IDX_BLOCK << 32 ) | prev;
+    ( void ) CAS( &array[ current_idx ], &prev, block );
 
     // allocate new index structure
     DWORD before = { .low = array[ CURRENT_IDX ], .high = array[ CRNT_BKT_CNT ] };
@@ -1251,11 +1324,11 @@ static sh_status_e allocate_new_index(
 
         long prev_idx = array[ PREV_IDX ];
         long rehash = array[ prev_idx + REHASH_BKT ];
-        (void) CAS( &array[ prev_idx + REHASH_BKT ], &rehash, 0 );
+        ( void ) CAS( &array[ prev_idx + REHASH_BKT ], &rehash, 0 );
 
     } else {
 
-        (void) free_data_slots( (shr_base_s*)map, view.slot ); 
+        ( void ) free_data_slots( (shr_base_s*)map, view.slot ); 
     }
 
     return SH_OK;
@@ -1325,7 +1398,7 @@ static sh_status_e release_prev_index(
     array[ view.slot + SIZE_OFFSET ] = prev_count * BUCKET_SIZE ;
 
     // append node to end of defer list
-    add_end( (shr_base_s*)map, view.slot, DEFER_TAIL );
+    add_end( ( shr_base_s * ) map, view.slot, DEFER_TAIL );
 
     return SH_OK;
 }
@@ -1467,7 +1540,7 @@ static sh_status_e remove_from_bucket(
         
 )   {
 
-    DWORD before = { .low = bitmap & (long)IDX_BLOCK, .high = counter };
+    DWORD before = { .low = bitmap & ( long ) IDX_BLOCK, .high = counter };
     DWORD after = { .low = bitmap & ~( 1 << index ), .high = before.high + 1 };
     if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
 
@@ -1566,11 +1639,11 @@ static sm_item_s add_value_uniquely(
     result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
     if (result.status == SH_OK) {
         
-        (void) AFA( &map->current->array[ COUNT ], 1 );
+        ( void ) AFA( &map->current->array[ COUNT ], 1 );
 
     } else {
 
-        (void) free_data_slots( (shr_base_s*)map, data_slot );
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
     }
 
     return result;
@@ -1611,7 +1684,7 @@ static sm_item_s find_value(
 
         result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
 
-        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+        if ( counter == ( volatile long ) array[ bucket + BTMP_CNTR ] ) {
 
             if ( result.status == SH_OK ) {
 
@@ -1632,7 +1705,7 @@ static sm_item_s find_select_value(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    int index,                  // index of field to read
+    int ordinal,                // ordinal of vector field to read
     size_t offset,              // offset into field to read
     size_t length,              // length of max read length
     void **buffer,              // address of buffer pointer -- not NULL
@@ -1664,12 +1737,12 @@ static sm_item_s find_select_value(
 
         result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
 
-        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+        if ( counter == ( volatile long ) array[ bucket + BTMP_CNTR ] ) {
 
             if ( result.status == SH_OK ) {
 
                 long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
-                copy_to_buffer_select( array, pair_slot, &result, index, offset, length, buffer, buff_size );
+                copy_to_buffer_select( array, pair_slot, &result, ordinal, offset, length, buffer, buff_size );
             }
             break;
         }
@@ -1714,7 +1787,7 @@ static sm_item_s find_value_attr(
 
         result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
 
-        if ( counter == array[ bucket + BTMP_CNTR ] ) {
+        if ( counter == ( volatile long ) array[ bucket + BTMP_CNTR ] ) {
 
             if ( result.status == SH_OK ) {
 
@@ -1775,14 +1848,14 @@ static sm_item_s remove_value(
         }
 
         long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
-        (void) copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
+        ( void ) copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
         result.status = remove_from_bucket( array, hash, index, bucket, bitmap, counter );
         if ( result.status != SH_OK ) {
 
             continue;
         }
 
-        (void) AFS( &map->current->array[ COUNT ], 1 );
+        ( void ) AFS( &map->current->array[ COUNT ], 1 );
 
         if ( is_bucket_contended( array, bucket ) ) {
 
@@ -2176,11 +2249,13 @@ extern sm_item_s shr_map_get(
 
 
 /*
-    shr_map_get_select -- returns data for the indexed vector field that begins i
+    shr_map_get_select -- returns data for the indexed vector field that begins 
     at offset for specified length that matches key
 
     The function finds value that matches the key, and for the specified indexed  
-    vector field reads the data beginning at offset for length specified. 
+    vector field reads the data beginning at offset for the minimum of either length 
+    specified or buffer size. Since only at most a single vector field is returned 
+    there is never an initialized returned vector. 
 
     returns sh_status_e:
 
@@ -2196,7 +2271,7 @@ extern sm_item_s shr_map_get_select(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    int index,                  // index of field to read
+    int ordinal,                  // vector ordinal to read -- greater than or equal to 0
     size_t offset,              // offset into field to read
     size_t length,              // length of max read length
     void **buffer,              // address of buffer pointer -- not NULL
@@ -2221,7 +2296,7 @@ extern sm_item_s shr_map_get_select(
 
     guard_map_memory( map );
 
-    sm_item_s result = find_select_value( map, key, klength, index, offset, length, buffer, buff_size );
+    sm_item_s result = find_select_value( map, key, klength, ordinal, offset, length, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;

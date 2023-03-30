@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2017 Bryan Karr
+Copyright (c) 2017-2023 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -76,6 +76,7 @@ typedef enum
     SH_ERR_SYS,             // system error
     SH_ERR_CONFLICT,        // update conflict
     SH_ERR_NO_MATCH,        // no match found for key
+    SH_ERR_BOUNDS,          // exceeds data bounds
     SH_ERR_MAX
 } sh_status_e;
 
