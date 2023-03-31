@@ -956,7 +956,7 @@ static void copy_to_buffer_select(
 
     if ( offset + copy_length > field_length ) {
 
-        copy_length = copy_length - ( ( offset + copy_length ) - field_length );
+        copy_length = field_length - offset;
     }
 
     memcpy( *buffer, src + offset, copy_length );
