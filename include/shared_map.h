@@ -119,12 +119,13 @@ extern sm_item_s shr_map_put(
 );
 
 
-extern sh_status_e shr_map_putv(
+extern sm_item_s shr_map_putv(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
     sh_vec_s *vector,           // pointer to vector of items -- not NULL
     int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
 );

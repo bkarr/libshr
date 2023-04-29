@@ -75,7 +75,7 @@ enum shr_map_data
 enum shr_map_bkt_hdr
 {
 
-    BITMAP,                 // lower half bitmap of in use index items/upper half 
+    BITMAP,                 // lower half bitmap of in use index items/upper half of 
                             // bucket 0 null value used to block inserts
     BTMP_CNTR,              // version counter of bitmap updates
     FILTER,                 // mini filter of memory sizes indexed in bucket
@@ -316,7 +316,7 @@ static sh_status_e initialize_map_struct(
 }
 
 
-static long next_item(
+static long next_deferred_item(
 
     shr_map_s *map,         // pointer to map
     long slot
@@ -352,7 +352,8 @@ static long next_item(
         return 0;
     }
 
-    return array[next + SLOT_OFFSET];
+    array[ next + SLOT_OFFSET ] = array[ next + SIZE_OFFSET ];
+    return array[ next + SLOT_OFFSET ];
 }
 
 
@@ -373,7 +374,7 @@ static long defer_remove(
 
     view_s view = insure_in_range( (shr_base_s*)map, head );
     array = view.extent->array;
-    long data_slot = next_item( map, head );
+    long data_slot = next_deferred_item( map, head );
 
     if ( data_slot == 0 ) {
 
@@ -452,9 +453,9 @@ static void clean_defer_list(
         }
 
         long data_slot = defer_remove( map );
-        if (data_slot >= BASE ) {
+        if ( data_slot >= BASE ) {
          
-            (void) free_data_slots( (shr_base_s*)map, data_slot ); 
+            (void) free_data_slots( (shr_base_s*) map, data_slot ); 
         }
     }
 }
@@ -1048,6 +1049,48 @@ static sh_status_e add_to_bucket(
 }
 
 
+static sh_status_e replace_in_bucket( 
+    
+    long *array,        // pointer to map array
+    long hash,          // computed hash value
+    long pair_slot,     // slot index for k/v pair
+    long pair_size,     // allocated size of k/v pair
+    long bucket,        // slot index for bucket
+    long active_slot,   // active slot of current pair in bucket
+    long token          // state token
+        
+)   {
+
+    long prev_size = array[ pair_slot + ITEM_LENGTH ];
+    long slot = bucket + ( active_slot * INDEX_ITEM );
+
+    DWORD before = { .low = array[ slot + DATA_SLOT ], .high = array[ slot + DATA_CNTR ]  };
+    if ( token != 0 ) {
+
+        before.high = token; 
+    }
+    DWORD after = { .low = pair_slot, .high = AFA( &array[ ID_CNTR ], 1 ) };
+
+    if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
+
+        return SH_ERR_CONFLICT;
+    }
+
+    if ( prev_size != pair_size ) {
+        (void) CAS( &array[ slot + ITEM_LENGTH ], &prev_size, pair_size );
+    }
+
+    long filter = array[ bucket + FILTER ];
+    while ( !( filter & pair_size ) && 
+            !CAS( &array[ bucket + FILTER ], &filter,  filter | pair_size ) ) {
+
+        filter = array[ bucket + FILTER ];
+    }
+
+    return SH_OK;
+}
+
+
 static sh_status_e scan_for_empty_slot(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -1451,7 +1494,7 @@ static sm_item_s scan_for_match(
     long *empty,                // empty slot pointer
     long *index                 // pointer to index of matched item in bucket
 
-)   {
+) {
 
     sm_item_s result = { .status = SH_ERR_NO_MATCH };
 
@@ -1509,7 +1552,6 @@ static sm_item_s scan_for_match(
             continue;
         }
         
-        //TODO figure out why I thought I needed this check a second time
         if (counter != array[ item + DATA_CNTR ] ) {
         
             // update of k/v pair detected -- restart bucket loop
@@ -1622,6 +1664,70 @@ static sm_item_s hash_add(
 }
 
 
+static sm_item_s hash_put(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    long pair_slot,             // data slot of k/v pair    
+    long pair_size,             // data allocation for k/v pair    
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            reindex_indices( map ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
+        if ( result.status == SH_OK ) { 
+
+            result.status = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, 0 );
+            break;
+        }
+
+        if ( empty <= 0 ) {
+
+            result.status = expand_hash_index( map );
+            if (result.status == SH_OK) {
+
+                bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+                continue;
+            }
+
+            //TODO pair_slot = evict_bucket( map, hash, &empty, &bitmap, &counter );
+        }
+
+        result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
+        if ( result.status == SH_OK ) {
+            
+            break;
+        }
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
+
 static sm_item_s add_value_uniquely(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -1637,6 +1743,34 @@ static sm_item_s add_value_uniquely(
     sm_item_s result = {0};
 
     result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
+    if (result.status == SH_OK) {
+        
+        ( void ) AFA( &map->current->array[ COUNT ], 1 );
+
+    } else {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
+
+    return result;
+}
+
+
+static sm_item_s put_value(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    long data_slot,             // slot address of k/v pair
+    long size,                  // slot size of k/v pair
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+
+)   {
+
+    sm_item_s result = {0};
+
+    result = hash_put( map, key, klength, data_slot, size, buffer, buff_size );
     if (result.status == SH_OK) {
         
         ( void ) AFA( &map->current->array[ COUNT ], 1 );
@@ -1801,7 +1935,6 @@ static sm_item_s find_value_attr(
     unguard_bucket( array, bucket );
     return result;
 }
-
 
 
 static sm_item_s remove_value(
@@ -2154,6 +2287,7 @@ extern sm_item_s shr_map_add(
 	SH_ERR_NOMEM	failed memory allocation
 */
 extern sm_item_s shr_map_addv(
+
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
@@ -2162,6 +2296,7 @@ extern sm_item_s shr_map_addv(
     sh_type_e repr,             // type represented by vector
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
+                                //
 )   {
 
     if ( map == NULL || 
@@ -2345,6 +2480,114 @@ extern sm_item_s shr_map_get_attr(
     guard_map_memory( map );
 
     sm_item_s result = find_value_attr( map, key, klength, buffer, buff_size );
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+    shr_map_put -- add or replace a key/value pair in the map
+
+    The shr_map_put function will add a key/value pair to the map if it does
+    not exist, or replaces an existing pair with the new pair
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
+                    or value length equals 0, or if buffer address or buff_size
+                    pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	failed memory allocation
+*/
+extern sm_item_s shr_map_put(
+
+    shr_map_s *map,			    // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void *value,                // pointer to value -- not NULL
+    size_t vlength,             // length of value -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+                                  
+)   {
+
+    if ( map == NULL || 
+         key == NULL || 
+         klength == 0 || 
+         value == NULL || 
+         vlength == 0 || 
+         buffer == NULL ||
+         buff_size == NULL || 
+         ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    guard_map_memory( map );
+
+    long slot_count = 0;
+    long data_slot = copy_kv_pair( map, key, klength, value, vlength, SH_OBJ_T, &slot_count );
+    if ( data_slot < HDR_END ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    sm_item_s result = put_value( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+ 
+*/
+extern sm_item_s shr_map_putv(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    sh_vec_s *vector,           // pointer to vector of items -- not NULL
+    int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+                                
+)   {
+
+    if ( map == NULL || 
+         key == NULL || 
+         klength == 0 || 
+         vector == NULL || 
+         vcnt < 1 || 
+         buffer == NULL ||
+         buff_size == NULL || 
+         ( *buffer != NULL && *buff_size == 0 ) ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    guard_map_memory( map );
+
+    long slot_count = 0;
+    long data_slot = 0;
+
+    if ( vcnt == 1 ) {
+        
+        data_slot = copy_kv_pair( map, key, klength, vector[ 0 ].base, vector[ 0 ].len, vector[ 0 ].type, &slot_count );
+    
+    } else {
+
+        data_slot = copy_kv_vector( map, key, klength, vector, vcnt, repr, &slot_count );
+    }
+
+    if ( data_slot < HDR_END ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    sm_item_s result = put_value( map, key, klength, data_slot, slot_count, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
