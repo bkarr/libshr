@@ -29,6 +29,8 @@ THE SOFTWARE.
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "shared_int.h"
 #include <shared_map.h>
@@ -1474,6 +1476,31 @@ static void test_putv_operation( void ) {
 }
 
 
+static void test_is_valid(void)
+{
+    sh_status_e status;
+    shr_map_s *map = NULL;
+    shm_unlink("testmap");
+    assert(!shr_map_is_valid(NULL));
+    assert(!shr_map_is_valid(""));
+    assert(!shr_map_is_valid("testmap"));
+    int fd = shm_open("testmap", O_RDWR | O_CREAT | O_EXCL, FILE_MODE);
+    assert(fd > 0);
+    int rc = ftruncate(fd, PAGE_SIZE >> 1);
+    assert(rc == 0);
+    assert(!shr_map_is_valid("testmap"));
+    rc = ftruncate(fd, PAGE_SIZE);
+    assert(rc == 0);
+    assert(!shr_map_is_valid("testmap"));
+    shm_unlink("testmap");
+    status = shr_map_create(&map, "testmap", 0);
+    assert(status == SH_OK);
+    assert(shr_map_is_valid("testmap"));
+    status = shr_map_destroy(&map);
+    assert(status == SH_OK);
+}
+
+
 int main( void ) {
 
     /*
@@ -1481,6 +1508,7 @@ int main( void ) {
     */
     test_create_error_paths();
     test_create_map();
+    test_is_valid();
 
     // set up to test open and close
 

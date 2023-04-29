@@ -31,6 +31,7 @@ THE SOFTWARE.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -2665,3 +2666,53 @@ extern sm_item_s shr_map_remove(
     return result;
 }
 
+
+/*
+    shr_map_is_valid -- returns true if name is a valid map
+
+    returns true if shared memory file is valid map, otherwise, false
+*/
+extern bool shr_map_is_valid(
+
+    char const * const name // name of map as a null terminated string -- not NULL
+
+)   {
+
+    size_t size = 0;
+    sh_status_e status = perform_name_validations( name, &size );
+    if ( status != SH_OK ) {
+
+        return false;
+    }
+
+    int fd = shm_open( name, O_RDONLY, FILE_MODE );
+    if ( fd < 0 ) {
+
+        return false;
+    }
+
+    long *array = mmap( 0, size, PROT_READ, MAP_SHARED, fd, 0 );
+    if ( array == (void*) -1 ) {
+
+        close( fd );
+        return false;
+    }
+
+    if ( memcmp( &array[ TAG ], SHMP, sizeof(SHMP) - 1 ) != 0 ) {
+
+        munmap( array, size );
+        close( fd );
+        return false;
+    }
+
+    if ( array[ VERSION ] != MPVERSION ) {
+
+        munmap( array, size );
+        close( fd );
+        return false;
+    }
+
+    munmap( array, size );
+    close( fd );
+    return true;
+}
