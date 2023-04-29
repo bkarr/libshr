@@ -2312,6 +2312,31 @@ extern sm_item_s shr_map_addv(
 
 
 /*
+    shr_map_count -- returns count of items in map, or -1 if it fails
+
+*/
+extern long shr_map_count(
+
+    shr_map_s *map              // pointer to map struct -- not NULL
+
+)   {
+
+    long result = -1;
+
+    if ( map != NULL ) {
+
+        guard_map_memory( map );
+
+        result = map->current->array[ COUNT ];
+
+        unguard_map_memory( map );
+    }
+
+    return result;
+}
+
+
+/*
     shr_map_get -- return value that matches key or a status of no match
 
     returns sh_status_e:
