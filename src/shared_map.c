@@ -1064,6 +1064,7 @@ static sh_status_e replace_in_bucket(
     long prev_size = array[ pair_slot + ITEM_LENGTH ];
     long slot = bucket + ( active_slot * INDEX_ITEM );
 
+    // update item in bucket with new key/value pair slot
     DWORD before = { .low = array[ slot + DATA_SLOT ], .high = array[ slot + DATA_CNTR ]  };
     if ( token != 0 ) {
 
@@ -1076,10 +1077,12 @@ static sh_status_e replace_in_bucket(
         return SH_ERR_CONFLICT;
     }
 
+    // update size in bucket
     if ( prev_size != pair_size ) {
         (void) CAS( &array[ slot + ITEM_LENGTH ], &prev_size, pair_size );
     }
 
+    // update size filter in bucket
     long filter = array[ bucket + FILTER ];
     while ( !( filter & pair_size ) && 
             !CAS( &array[ bucket + FILTER ], &filter,  filter | pair_size ) ) {
@@ -1700,7 +1703,22 @@ static sm_item_s hash_put(
         result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
         if ( result.status == SH_OK ) { 
 
+            long old_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
             result.status = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, 0 );
+            if ( result.status == SH_OK ) {
+            
+                copy_to_buffer( array, old_slot, &result, buffer, buff_size );
+                if ( is_bucket_contended( array, bucket ) ) {
+
+                    // add k/v memory to defer list
+                    result.status = release_pair( map, old_slot );
+
+                } else {
+                
+                    // release uncontended k/v memory
+                    result.status = free_data_slots( (shr_base_s*)map, old_slot );
+                }
+            }
             break;
         }
 
@@ -2296,7 +2314,7 @@ extern sm_item_s shr_map_addv(
     sh_type_e repr,             // type represented by vector
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
-                                //
+                                
 )   {
 
     if ( map == NULL || 
@@ -2406,7 +2424,7 @@ extern sm_item_s shr_map_get_select(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    int ordinal,                  // vector ordinal to read -- greater than or equal to 0
+    int ordinal,                // vector ordinal to read -- greater than or equal to 0
     size_t offset,              // offset into field to read
     size_t length,              // length of max read length
     void **buffer,              // address of buffer pointer -- not NULL

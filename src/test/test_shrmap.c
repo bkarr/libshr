@@ -1088,22 +1088,25 @@ static void test_put_bucket_overflow( void ) {
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
     key = "seventeen";
-    klen = strlen(key);
+    klen = strlen( key );
     value = "test seventeen";
-    vlen = strlen(value);
-    result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
-    assert(result.status == SH_OK);
-    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
-    assert(result.status == SH_OK);
+    vlen = strlen( value );
+    result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    assert( result.value == NULL );
+    result = shr_map_get( map, (uint8_t*) key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
     assert( memcmp( value, result.value, vlen ) == 0 );
 
 
     key = "one";
-    klen = strlen(key);
+    klen = strlen( key );
     value = "test put one";
-    vlen = strlen(value);
+    vlen = strlen( value );
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
-    assert(result.status == SH_OK);
+    assert( result.status == SH_OK );
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1113,12 +1116,19 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
+    result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
+    assert(result.status == SH_OK);
+    assert( memcmp( value, result.value, vlen ) == 0 );
     key = "three";
     klen = strlen(key);
     value = "test put three";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1128,6 +1138,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1137,6 +1149,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1146,6 +1160,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1155,6 +1171,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1164,6 +1182,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1173,6 +1193,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1182,6 +1204,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1191,6 +1215,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1200,6 +1226,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1209,6 +1237,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1218,6 +1248,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1227,6 +1259,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1236,6 +1270,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
@@ -1245,6 +1281,8 @@ static void test_put_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.value != NULL );
+    assert( memcmp( value, result.value, vlen ) != 0 );
     result = shr_map_get( map, (uint8_t*)key, klen, &buffer, &buff_size);
     assert(result.status == SH_OK);
     assert( memcmp( value, result.value, vlen ) == 0 );
