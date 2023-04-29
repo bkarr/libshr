@@ -1658,6 +1658,7 @@ static sm_item_s hash_add(
         result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
         if ( result.status == SH_OK ) {
             
+            ( void ) AFA( &array[ COUNT ], 1 );
             break;
         }
     }
@@ -1737,6 +1738,7 @@ static sm_item_s hash_put(
         result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
         if ( result.status == SH_OK ) {
             
+            ( void ) AFA( &array[ COUNT ], 1 );
             break;
         }
     }
@@ -1746,63 +1748,7 @@ static sm_item_s hash_put(
 }
 
 
-static sm_item_s add_value_uniquely(
-
-    shr_map_s *map,             // pointer to map struct -- not NULL
-    uint8_t *key,               // pointer to key -- not NULL
-    size_t klength,             // length of key -- greater than 0
-    long data_slot,             // slot address of k/v pair
-    long size,                  // slot size of k/v pair
-    void **buffer,              // address of buffer pointer -- not NULL
-    size_t *buff_size           // pointer to size of buffer -- not NULL
-
-)   {
-
-    sm_item_s result = {0};
-
-    result = hash_add( map, key, klength, data_slot, size, buffer, buff_size );
-    if (result.status == SH_OK) {
-        
-        ( void ) AFA( &map->current->array[ COUNT ], 1 );
-
-    } else {
-
-        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
-    }
-
-    return result;
-}
-
-
-static sm_item_s put_value(
-
-    shr_map_s *map,             // pointer to map struct -- not NULL
-    uint8_t *key,               // pointer to key -- not NULL
-    size_t klength,             // length of key -- greater than 0
-    long data_slot,             // slot address of k/v pair
-    long size,                  // slot size of k/v pair
-    void **buffer,              // address of buffer pointer -- not NULL
-    size_t *buff_size           // pointer to size of buffer -- not NULL
-
-)   {
-
-    sm_item_s result = {0};
-
-    result = hash_put( map, key, klength, data_slot, size, buffer, buff_size );
-    if (result.status == SH_OK) {
-        
-        ( void ) AFA( &map->current->array[ COUNT ], 1 );
-
-    } else {
-
-        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
-    }
-
-    return result;
-}
-
-
-static sm_item_s find_value(
+static sm_item_s hash_find(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
@@ -1852,7 +1798,7 @@ static sm_item_s find_value(
 }
 
 
-static sm_item_s find_select_value(
+static sm_item_s hash_select_value(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
@@ -1905,7 +1851,7 @@ static sm_item_s find_select_value(
 }
 
 
-static sm_item_s find_value_attr(
+static sm_item_s hash_value_attr(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
@@ -1955,7 +1901,7 @@ static sm_item_s find_value_attr(
 }
 
 
-static sm_item_s remove_value(
+static sm_item_s hash_remove(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
@@ -2283,7 +2229,12 @@ extern sm_item_s shr_map_add(
         return (sm_item_s) { .status = SH_ERR_NOMEM };
     }
 
-    sm_item_s result = add_value_uniquely( map, key, klength, data_slot, slot_count, buffer, buff_size );
+    sm_item_s result = hash_add( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
 
     unguard_map_memory( map );
     return result;
@@ -2348,7 +2299,12 @@ extern sm_item_s shr_map_addv(
         return (sm_item_s) { .status = SH_ERR_NOMEM };
     }
 
-    sm_item_s result = add_value_uniquely( map, key, klength, data_slot, slot_count, buffer, buff_size );
+    sm_item_s result = hash_add( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
 
     unguard_map_memory( map );
     return result;
@@ -2394,7 +2350,7 @@ extern sm_item_s shr_map_get(
 
     guard_map_memory( map );
 
-    sm_item_s result = find_value( map, key, klength, buffer, buff_size );
+    sm_item_s result = hash_find( map, key, klength, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
@@ -2449,7 +2405,7 @@ extern sm_item_s shr_map_get_select(
 
     guard_map_memory( map );
 
-    sm_item_s result = find_select_value( map, key, klength, ordinal, offset, length, buffer, buff_size );
+    sm_item_s result = hash_select_value( map, key, klength, ordinal, offset, length, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
@@ -2497,7 +2453,7 @@ extern sm_item_s shr_map_get_attr(
 
     guard_map_memory( map );
 
-    sm_item_s result = find_value_attr( map, key, klength, buffer, buff_size );
+    sm_item_s result = hash_value_attr( map, key, klength, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
@@ -2552,7 +2508,12 @@ extern sm_item_s shr_map_put(
         return (sm_item_s) { .status = SH_ERR_NOMEM };
     }
 
-    sm_item_s result = put_value( map, key, klength, data_slot, slot_count, buffer, buff_size );
+    sm_item_s result = hash_put( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
 
     unguard_map_memory( map );
     return result;
@@ -2563,7 +2524,7 @@ extern sm_item_s shr_map_put(
     shr_map_putv -- add or replace a key/vector pair in the map
  
 
-    The shr_map_put function will add a key/vector pair to the map if it does
+    The shr_map_putv function will add a key/vector pair to the map if it does
     not exist, or replaces an existing pair with the new pair overwriting 
     existing pair regardless of state
 
@@ -2619,7 +2580,12 @@ extern sm_item_s shr_map_putv(
         return (sm_item_s) { .status = SH_ERR_NOMEM };
     }
 
-    sm_item_s result = put_value( map, key, klength, data_slot, slot_count, buffer, buff_size );
+    sm_item_s result = hash_put( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
 
     unguard_map_memory( map );
     return result;
@@ -2668,7 +2634,7 @@ extern sm_item_s shr_map_remove(
 
     guard_map_memory( map );
 
-    sm_item_s result = remove_value( map, key, klength, buffer, buff_size );
+    sm_item_s result = hash_remove( map, key, klength, buffer, buff_size );
 
     unguard_map_memory( map );
     return result;
