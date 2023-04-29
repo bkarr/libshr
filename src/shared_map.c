@@ -2490,7 +2490,8 @@ extern sm_item_s shr_map_get_attr(
     shr_map_put -- add or replace a key/value pair in the map
 
     The shr_map_put function will add a key/value pair to the map if it does
-    not exist, or replaces an existing pair with the new pair
+    not exist, or replaces an existing pair with the new pair overwriting 
+    existing pair regardless of state
 
     returns sh_status_e:
 
@@ -2541,7 +2542,20 @@ extern sm_item_s shr_map_put(
 
 
 /*
+    shr_map_putv -- add or replace a key/vector pair in the map
  
+
+    The shr_map_put function will add a key/vector pair to the map if it does
+    not exist, or replaces an existing pair with the new pair overwriting 
+    existing pair regardless of state
+
+    returns sh_status_e:
+
+    SH_OK           on success
+    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
+                    or value length equals 0, or if buffer address or buff_size
+                    pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	failed memory allocation
 */
 extern sm_item_s shr_map_putv(
 
