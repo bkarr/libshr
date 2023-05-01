@@ -1501,6 +1501,114 @@ static void test_is_valid(void)
 }
 
 
+static void test_update_operation( void ) {
+
+    sh_status_e status;
+    shr_map_s *map = NULL;
+    void *buffer = NULL;
+    size_t buff_size = 0;
+    char *key = NULL;
+    size_t klen = 0;
+    char *value = NULL;
+    size_t vlen = 0;
+    sm_item_s result = {0};
+ 
+    status = shr_map_open( &map, "testmap" );
+    assert( status == SH_OK );
+    int prev_count = shr_map_count( map );
+
+    key = "one update";
+    klen = strlen( key );
+    value = "test one";
+    vlen = strlen( value );
+
+    result = shr_map_add(map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size);
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map )  - 1 );
+    value = "test one update";
+    vlen = strlen( value );
+    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, 0 );
+    assert( result.status == SH_ERR_ARG );
+    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token - 1 );
+    assert( result.status == SH_ERR_CONFLICT );
+    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token );
+    assert( result.status == SH_OK );
+    assert( result.vlength == strlen( "test one") );
+    assert( memcmp( "test one", result.value, result.vlength ) == 0 );
+    result = shr_map_remove( map, ( uint8_t * )key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map ) );
+    assert( result.vlength == vlen );
+    assert( memcmp( value, result.value, result.vlength ) == 0 );
+    
+    status = shr_map_close( &map );
+    assert( status == SH_OK );
+    assert( map == NULL );
+    free( buffer );
+}
+
+
+static void test_updatev_operation( void ) {
+
+    sh_status_e status;
+    shr_map_s *map = NULL;
+    void *buffer = NULL;
+    size_t buff_size = 0;
+    char *key = NULL;
+    size_t klen = 0;
+    sm_item_s result = {0};
+    sh_vec_s vector[2] = {{0}, {0}};
+ 
+    vector[ 0 ].type = SH_ASCII_T;
+    vector[ 0 ].base = "token";
+    vector[ 0 ].len = 5;
+    vector[ 1 ].type = SH_ASCII_T;
+    vector[ 1 ].base = "test one";
+    vector[ 1 ].len = strlen( vector[ 1 ].base );
+    status = shr_map_open( &map, "testmap" );
+    assert( status == SH_OK );
+    int prev_count = shr_map_count( map );
+
+    key = "one updatev";
+    klen = strlen( key );
+
+    result = shr_map_addv(map, ( uint8_t * ) key, klen, vector, 2, SH_TUPLE_T, &buffer, &buff_size);
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map )  - 1 );
+    vector[ 1 ].base = "test one update";
+    vector[ 1 ].len = strlen( vector[ 1 ].base );
+    result = shr_map_updatev( map, ( uint8_t * ) key, klen, vector, 2, SH_TUPLE_T, &buffer, &buff_size, 0 );
+    assert( result.status == SH_ERR_ARG );
+    result = shr_map_updatev( map, ( uint8_t * ) key, klen, vector, 2, SH_TUPLE_T, &buffer, &buff_size, result.token - 1 );
+    assert( result.status == SH_ERR_CONFLICT );
+    result = shr_map_updatev( map, ( uint8_t * ) key, klen, vector, 2, SH_TUPLE_T, &buffer, &buff_size, result.token );
+    assert( result.status == SH_OK );
+    assert( result.vcount == 2 );
+    assert( result.vector[ 0 ].type == vector[ 0 ].type );
+    assert( result.vector[ 0 ].len == vector[ 0 ].len );
+    assert( memcmp( vector[ 0 ].base, result.vector[ 0 ].base, result.vector[ 0 ].len ) == 0 );
+    assert( result.vector[ 1 ].type == vector[ 1 ].type );
+    assert( result.vector[ 1 ].len == strlen("test one") );
+    assert( memcmp( "test one", result.vector[ 1 ].base, result.vector[ 1 ].len ) == 0 );
+    result = shr_map_remove( map, ( uint8_t * )key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map ) );
+    assert( result.type == SH_TUPLE_T );
+    assert( result.vcount == 2 );
+    assert( result.vector[ 0 ].type == vector[ 0 ].type );
+    assert( result.vector[ 1 ].type == vector[ 1 ].type );
+    assert( result.vector[ 0 ].len == vector[ 0 ].len );
+    assert( result.vector[ 1 ].len == vector[ 1 ].len );
+    assert( memcmp( vector[ 0 ].base, result.vector[ 0 ].base, result.vector[ 0 ].len ) == 0 );
+    assert( memcmp( vector[ 1 ].base, result.vector[ 1 ].base, result.vector[ 1 ].len ) == 0 );
+    
+    status = shr_map_close( &map );
+    assert( status == SH_OK );
+    assert( map == NULL );
+    free( buffer );
+}
+
+
 int main( void ) {
 
     /*
@@ -1525,6 +1633,8 @@ int main( void ) {
     test_get_select();
     test_put_bucket_overflow();
     test_putv_operation();
+    test_update_operation();
+    test_updatev_operation();
     status = shr_map_destroy( &map );
     assert( status == SH_OK );
 

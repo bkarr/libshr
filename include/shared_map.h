@@ -32,6 +32,11 @@ typedef struct  sm_item
 ==============================================================================*/
 
 
+extern long shr_map_count(
+    shr_map_s *map              // pointer to map struct -- not NULL
+);
+
+
 extern sh_status_e shr_map_create(
     shr_map_s **map,            // address of map struct pointer -- not NULL
     char const * const name,	// name of map as a null terminated string -- not NULL
@@ -75,6 +80,11 @@ extern sm_item_s shr_map_addv(
     sh_type_e repr,             // type represented by vector
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
+);
+
+
+extern bool shr_map_is_valid(
+    char const * const name     // name of map as a null terminated string -- not NULL
 );
 
 
@@ -140,13 +150,28 @@ extern sm_item_s shr_map_remove(
 );
 
 
-extern long shr_map_count(
-    shr_map_s *map              // pointer to map struct -- not NULL
+extern sm_item_s shr_map_update(
+    shr_map_s *map,			    // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void *value,                // pointer to value -- not NULL
+    size_t vlength,             // length of value -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
 );
 
 
-extern bool shr_map_is_valid(
-    char const * const name     // name of map as a null terminated string -- not NULL
+extern sm_item_s shr_map_updatev(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    sh_vec_s *vector,           // pointer to vector of items -- not NULL
+    int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
 );
 
 

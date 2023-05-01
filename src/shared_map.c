@@ -1067,10 +1067,12 @@ static sh_status_e replace_in_bucket(
 
     // update item in bucket with new key/value pair slot
     DWORD before = { .low = array[ slot + DATA_SLOT ], .high = array[ slot + DATA_CNTR ]  };
+
     if ( token != 0 ) {
 
         before.high = token; 
     }
+
     DWORD after = { .low = pair_slot, .high = AFA( &array[ ID_CNTR ], 1 ) };
 
     if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
@@ -1852,6 +1854,63 @@ static sm_item_s hash_select_value(
 }
 
 
+static sm_item_s hash_update(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    long pair_slot,             // data slot of k/v pair    
+    long pair_size,             // data allocation for k/v pair    
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    if ( is_expanded( map ) ) {
+    
+        reindex_indices( map ); 
+        bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    }
+ 
+    long empty = 0;
+    long index = 0;
+    long bitmap = array[ bucket + BITMAP ];
+
+    result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
+    if ( result.status == SH_OK ) { 
+
+        long old_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+        result.status = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, token );
+        if ( result.status == SH_OK ) {
+        
+            copy_to_buffer( array, old_slot, &result, buffer, buff_size );
+            if ( is_bucket_contended( array, bucket ) ) {
+
+                // add k/v memory to defer list
+                result.status = release_pair( map, old_slot );
+
+            } else {
+            
+                // release uncontended k/v memory
+                result.status = free_data_slots( (shr_base_s*)map, old_slot );
+            }
+        }
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
+
 static sm_item_s hash_value_attr(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -2191,11 +2250,12 @@ extern sh_status_e shr_map_close(
 
     returns sh_status_e:
 
-    SH_OK           on success
-    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
-                    or value length equals 0, or if buffer address or buff_size
-                    pointer is NULL, or if buffer is not NULL and buff_size is 0
-	SH_ERR_NOMEM	failed memory allocation
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct, key, or value is NULL, key length
+                        or value length equals 0, or if buffer address or buff_size
+                        pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	    failed memory allocation
+    SH_ERR_CONFLICT     if key/value pair already exists in map
 */
 extern sm_item_s shr_map_add(
 
@@ -2250,11 +2310,12 @@ extern sm_item_s shr_map_add(
 
     returns sh_status_e:
 
-    SH_OK           on success
-    SH_ERR_ARG      if pointer to map struct, key, or value is NULL, key length
-                    or value length equals 0, or if buffer address or buff_size
-                    pointer is NULL, or if buffer is not NULL and buff_size is 0
-	SH_ERR_NOMEM	failed memory allocation
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct, key, or value is NULL, key length
+                        or value length equals 0, or if buffer address or buff_size
+                        pointer is NULL, or if buffer is not NULL and buff_size is 0
+	SH_ERR_NOMEM	    failed memory allocation
+    SH_ERR_CONFLICT     if key/value pair already exists in map
 */
 extern sm_item_s shr_map_addv(
 
@@ -2491,7 +2552,7 @@ extern sm_item_s shr_map_get_attr(
 
     The shr_map_put function will add a key/value pair to the map if it does
     not exist, or replaces an existing pair with the new pair overwriting 
-    existing pair regardless of state
+    existing pair regardless of state and returning the replaced value.
 
     returns sh_status_e:
 
@@ -2552,7 +2613,7 @@ extern sm_item_s shr_map_put(
 
     The shr_map_putv function will add a key/vector pair to the map if it does
     not exist, or replaces an existing pair with the new pair overwriting 
-    existing pair regardless of state
+    existing pair regardless of state and returning the replaced value.
 
     returns sh_status_e:
 
@@ -2607,6 +2668,145 @@ extern sm_item_s shr_map_putv(
     }
 
     sm_item_s result = hash_put( map, key, klength, data_slot, slot_count, buffer, buff_size );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+    shr_map_update -- update the value associated with key if state token matches
+
+    The shr_map_update function will overwrite the value of an existing key 
+    returning the replaced value if the provided state token matches.
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct, key, or value is NULL, key length
+                        or value length equals 0, or if buffer address or buff_size
+                        pointer is NULL, or if buffer is not NULL and buff_size is 0,
+                        or if token is 0
+	SH_ERR_NOMEM	    failed memory allocation
+    SH_ERR_NO_MATCH     no value found that matches key 
+    SH_ERR_CONFLICT     if key/value pair state does not match state token
+*/
+extern sm_item_s shr_map_update(
+
+    shr_map_s *map,			    // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void *value,                // pointer to value -- not NULL
+    size_t vlength,             // length of value -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
+
+)   {
+
+    if ( map == NULL || 
+         key == NULL || 
+         klength == 0 || 
+         value == NULL || 
+         vlength == 0 || 
+         buffer == NULL ||
+         buff_size == NULL || 
+         ( *buffer != NULL && *buff_size == 0 ) ||
+         token == 0) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    guard_map_memory( map );
+
+    long slot_count = 0;
+    long data_slot = copy_kv_pair( map, key, klength, value, vlength, SH_OBJ_T, &slot_count );
+    if ( data_slot < HDR_END ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    sm_item_s result = hash_update( map, key, klength, data_slot, slot_count, buffer, buff_size, token );
+
+    if (result.status != SH_OK) {
+
+        ( void ) free_data_slots( (shr_base_s*)map, data_slot );
+    }
+
+    unguard_map_memory( map );
+    return result;
+}
+
+
+/*
+    shr_map_updatev -- update the vector value associated with key if state token matches
+
+    The shr_map_update function will overwrite the vector value of an existing key 
+    returning the replaced value if the provided state token matches.
+
+    returns sh_status_e:
+
+    SH_OK               on success
+    SH_ERR_ARG          if pointer to map struct, key, or value is NULL, key length
+                        or value length equals 0, or if buffer address or buff_size
+                        pointer is NULL, or if buffer is not NULL and buff_size is 0,
+                        or if token is 0
+	SH_ERR_NOMEM	    failed memory allocation
+    SH_ERR_NO_MATCH     no value found that matches key 
+    SH_ERR_CONFLICT     if key/value pair state does not match state token
+*/
+extern sm_item_s shr_map_updatev(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    sh_vec_s *vector,           // pointer to vector of items -- not NULL
+    int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
+
+)   {
+
+    if ( map == NULL || 
+         key == NULL || 
+         klength == 0 || 
+         vector == NULL || 
+         vcnt < 1 || 
+         buffer == NULL ||
+         buff_size == NULL || 
+         ( *buffer != NULL && *buff_size == 0 ) ||
+         token == 0) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    guard_map_memory( map );
+
+    long slot_count = 0;
+    long data_slot = 0;
+
+    if ( vcnt == 1 ) {
+        
+        data_slot = copy_kv_pair( map, key, klength, vector[ 0 ].base, vector[ 0 ].len, vector[ 0 ].type, &slot_count );
+    
+    } else {
+
+        data_slot = copy_kv_vector( map, key, klength, vector, vcnt, repr, &slot_count );
+    }
+
+    if ( data_slot < HDR_END ) {
+        
+        return (sm_item_s) { .status = SH_ERR_NOMEM };
+    }
+
+    sm_item_s result = hash_update( map, key, klength, data_slot, slot_count, buffer, buff_size, token );
 
     if (result.status != SH_OK) {
 
