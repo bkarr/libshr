@@ -26,6 +26,7 @@ THE SOFTWARE.
 #include <assert.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -153,6 +154,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "two";
     klen = strlen(key);
@@ -160,6 +162,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "three";
     klen = strlen(key);
@@ -167,6 +170,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "four";
     klen = strlen(key);
@@ -174,6 +178,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "five";
     klen = strlen(key);
@@ -181,6 +186,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "six";
     klen = strlen(key);
@@ -188,6 +194,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "seven";
     klen = strlen(key);
@@ -195,6 +202,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "eight";
     klen = strlen(key);
@@ -202,6 +210,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "nine";
     klen = strlen(key);
@@ -209,6 +218,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "ten";
     klen = strlen(key);
@@ -216,6 +226,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "eleven";
     klen = strlen(key);
@@ -223,6 +234,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "twelve";
     klen = strlen(key);
@@ -230,6 +242,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "thirteen";
     klen = strlen(key);
@@ -237,6 +250,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "fourteen";
     klen = strlen(key);
@@ -244,6 +258,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "fifteen";
     klen = strlen(key);
@@ -251,6 +266,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "sixteen";
     klen = strlen(key);
@@ -258,6 +274,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
 
     key = "one";
@@ -266,6 +283,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "two";
     klen = strlen(key);
@@ -273,6 +291,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "three";
     klen = strlen(key);
@@ -280,6 +299,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "four";
     klen = strlen(key);
@@ -287,6 +307,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "five";
     klen = strlen(key);
@@ -294,6 +315,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "six";
     klen = strlen(key);
@@ -301,6 +323,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "seven";
     klen = strlen(key);
@@ -308,6 +331,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "eight";
     klen = strlen(key);
@@ -315,6 +339,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "nine";
     klen = strlen(key);
@@ -322,6 +347,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "ten";
     klen = strlen(key);
@@ -329,6 +355,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "eleven";
     klen = strlen(key);
@@ -336,6 +363,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "twelve";
     klen = strlen(key);
@@ -343,6 +371,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "thirteen";
     klen = strlen(key);
@@ -350,6 +379,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "fourteen";
     klen = strlen(key);
@@ -357,6 +387,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "fifteen";
     klen = strlen(key);
@@ -364,6 +395,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "sixteen";
     klen = strlen(key);
@@ -371,6 +403,7 @@ static void test_add_bucket_overflow( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
 
     status = shr_map_close( &map );
@@ -402,6 +435,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "two";
     klen = strlen(key);
@@ -409,6 +443,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "three";
     klen = strlen(key);
@@ -416,6 +451,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "four";
     klen = strlen(key);
@@ -423,6 +459,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "five";
     klen = strlen(key);
@@ -430,6 +467,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "six";
     klen = strlen(key);
@@ -437,6 +475,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "seven";
     klen = strlen(key);
@@ -444,6 +483,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "eight";
     klen = strlen(key);
@@ -451,6 +491,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "nine";
     klen = strlen(key);
@@ -458,6 +499,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "ten";
     klen = strlen(key);
@@ -465,6 +507,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "eleven";
     klen = strlen(key);
@@ -472,6 +515,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "twelve";
     klen = strlen(key);
@@ -479,6 +523,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "thirteen";
     klen = strlen(key);
@@ -486,6 +531,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "fourteen";
     klen = strlen(key);
@@ -493,6 +539,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
     key = "fifteen";
     klen = strlen(key);
@@ -500,6 +547,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == ++prev_count );
 
     key = "one";
@@ -508,6 +556,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "two";
     klen = strlen(key);
@@ -515,6 +564,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "three";
     klen = strlen(key);
@@ -522,6 +572,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "four";
     klen = strlen(key);
@@ -529,6 +580,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "five";
     klen = strlen(key);
@@ -536,6 +588,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "six";
     klen = strlen(key);
@@ -543,6 +596,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "seven";
     klen = strlen(key);
@@ -550,6 +604,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "eight";
     klen = strlen(key);
@@ -557,6 +612,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "nine";
     klen = strlen(key);
@@ -564,6 +620,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "ten";
     klen = strlen(key);
@@ -571,6 +628,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "eleven";
     klen = strlen(key);
@@ -578,6 +636,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "twelve";
     klen = strlen(key);
@@ -585,6 +644,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "thirteen";
     klen = strlen(key);
@@ -592,6 +652,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "fourteen";
     klen = strlen(key);
@@ -599,6 +660,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
     key = "fifteen";
     klen = strlen(key);
@@ -606,6 +668,7 @@ static void test_add_single_bucket( void ) {
     vlen = strlen(value);
     result = shr_map_add(map, ( uint8_t * )key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_ERR_CONFLICT);
+    assert( result.token != 0 );
     assert( shr_map_count( map ) == prev_count );
 
     status = shr_map_close( &map );
@@ -632,76 +695,91 @@ static void test_get_single_bucket( void ) {
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test one", result.value, result.vlength ) == 0 );
     key = "two";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test two", result.value, result.vlength ) == 0 );
     key = "three";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test three", result.value, result.vlength ) == 0 );
     key = "four";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test four", result.value, result.vlength ) == 0 );
     key = "five";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test five", result.value, result.vlength ) == 0 );
     key = "six";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test six", result.value, result.vlength ) == 0 );
     key = "seven";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test seven", result.value, result.vlength ) == 0 );
     key = "eight";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test eight", result.value, result.vlength ) == 0 );
     key = "nine";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test nine", result.value, result.vlength ) == 0 );
     key = "ten";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test ten", result.value, result.vlength ) == 0 );
     key = "eleven";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test eleven", result.value, result.vlength ) == 0 );
     key = "twelve";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test twelve", result.value, result.vlength ) == 0 );
     key = "thirteen";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test thirteen", result.value, result.vlength ) == 0 );
     key = "fourteen";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test fourteen", result.value, result.vlength ) == 0 );
     key = "fifteen";
     klen = strlen( key );
     result = shr_map_get( map, ( uint8_t * ) key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
+    assert( result.token != 0 );
     assert( memcmp( "test fifteen", result.value, result.vlength ) == 0 );
 
     status = shr_map_close( &map );
@@ -876,6 +954,7 @@ static void test_addv_operation( void ) {
     klen = strlen( key );
     result = shr_map_addv( map, ( uint8_t * ) key, klen, vector, 1, SH_TUPLE_T, &buffer, &buff_size );
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( prev_count == shr_map_count( map )  - 1 );
     result = shr_map_remove( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -889,6 +968,7 @@ static void test_addv_operation( void ) {
     vector[ 1 ].len = strlen( vector[ 1 ].base );
     result = shr_map_addv(map, ( uint8_t * ) key, klen, vector, 2, SH_TUPLE_T, &buffer, &buff_size);
     assert(result.status == SH_OK);
+    assert( result.token != 0 );
     assert( prev_count == shr_map_count( map )  - 1 );
     result = shr_map_remove( map, ( uint8_t * )key, klen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -1529,7 +1609,7 @@ static void test_update_operation( void ) {
     vlen = strlen( value );
     result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, 0 );
     assert( result.status == SH_ERR_ARG );
-    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token - 1 );
+    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token + 1 );
     assert( result.status == SH_ERR_CONFLICT );
     result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token );
     assert( result.status == SH_OK );
@@ -1609,6 +1689,67 @@ static void test_updatev_operation( void ) {
 }
 
 
+static void test_delete_operation( void ) {
+
+    sh_status_e status;
+    shr_map_s *map = NULL;
+    void *buffer = NULL;
+    size_t buff_size = 0;
+    char *key = NULL;
+    size_t klen = 0;
+    char *value = NULL;
+    size_t vlen = 0;
+    long token = 0;
+    sm_item_s result = {0};
+ 
+    status = shr_map_open( &map, "testmap" );
+    assert( status == SH_OK );
+    int prev_count = shr_map_count( map );
+
+    key = "one delete";
+    klen = strlen( key );
+    value = "test one";
+    vlen = strlen( value );
+
+    result = shr_map_add( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    token = result.token;
+    assert( prev_count == shr_map_count( map ) - 1 );
+    result = shr_map_delete( map, ( uint8_t * ) key, klen, &buffer, &buff_size, 0 );
+    assert( result.status == SH_ERR_ARG );
+    assert( prev_count == shr_map_count( map ) - 1 );
+    result = shr_map_delete( map, ( uint8_t * ) key, klen, &buffer, &buff_size, token );
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map ) );
+    assert( memcmp( value, result.value, result.vlength ) == 0 );
+    result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+
+    key = "two delete";
+    klen = strlen( key );
+    value = "test two";
+    vlen = strlen( value );
+
+    result = shr_map_add( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    token = result.token;
+    assert( prev_count == shr_map_count( map ) - 1 );
+    value = "test two update";
+    vlen = strlen( value );
+    result = shr_map_update( map, ( uint8_t * ) key, klen, value, vlen, &buffer, &buff_size, result.token );
+    assert( result.status == SH_OK );
+    result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
+    assert( result.status == SH_OK );
+    assert( result.token != token );
+    token = result.token;
+    result = shr_map_delete( map, ( uint8_t * ) key, klen, &buffer, &buff_size, token );
+    assert( result.status == SH_OK );
+    assert( prev_count == shr_map_count( map ) );
+    assert( memcmp( value, result.value, result.vlength ) == 0 );
+    result = shr_map_get( map, ( uint8_t * )key, klen, &buffer, &buff_size );
+    assert( result.status == SH_ERR_NO_MATCH );
+}
+
 int main( void ) {
 
     /*
@@ -1635,6 +1776,7 @@ int main( void ) {
     test_putv_operation();
     test_update_operation();
     test_updatev_operation();
+    test_delete_operation();
     status = shr_map_destroy( &map );
     assert( status == SH_OK );
 

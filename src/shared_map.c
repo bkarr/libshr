@@ -1003,7 +1003,7 @@ static void copy_attr_to_buffer(
 }
 
 
-static sh_status_e add_to_bucket( 
+static sm_item_s add_to_bucket( 
     
     long *array,        // pointer to map array
     long hash,          // computed hash value
@@ -1016,17 +1016,23 @@ static sh_status_e add_to_bucket(
         
 )   {
 
+    sm_item_s result = { .status = SH_OK };
+
     DWORD before = { 0 };
     DWORD after = { .low = pair_slot, .high = AFA( &array[ ID_CNTR ], 1 ) };
     long slot = bucket + ( empty * INDEX_ITEM );
     if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
 
-        return SH_ERR_CONFLICT;
+        result.status = SH_ERR_CONFLICT;
+        return result;
     }
+    result.token = after.high;
 
     array[ slot + HASH ] = hash;
     array[ slot + ITEM_LENGTH ] = pair_size;
-    before.low = bitmap & ( long ) IDX_BLOCK;
+    before.low = bitmap & ( uint64_t ) IDX_BLOCK;
+
+    // update bucket bitmap indicating slot in use
     before.high = counter;
     after.low = bitmap | ( 1 << empty );
     after.high = before.high + 1;
@@ -1036,9 +1042,11 @@ static sh_status_e add_to_bucket(
         array[ slot + ITEM_LENGTH ] = 0;
         array[ slot + DATA_SLOT ] = 0;
         array[ slot + DATA_CNTR ] = 0;
-        return SH_ERR_CONFLICT;
+        result.status = SH_ERR_CONFLICT;
+        return result;
     }
 
+    // update size filter in bucket
     long filter = array[ bucket + FILTER ];
     while ( !( filter & pair_size ) && 
             !CAS( &array[ bucket + FILTER ], &filter,  filter | pair_size ) ) {
@@ -1046,11 +1054,11 @@ static sh_status_e add_to_bucket(
         filter = array[ bucket + FILTER ];
     }
 
-    return SH_OK;
+    return result;
 }
 
 
-static sh_status_e replace_in_bucket( 
+static sm_item_s replace_in_bucket( 
     
     long *array,        // pointer to map array
     long hash,          // computed hash value
@@ -1061,6 +1069,8 @@ static sh_status_e replace_in_bucket(
     long token          // state token
         
 )   {
+
+    sm_item_s result = { .status = SH_OK };
 
     long prev_size = array[ pair_slot + ITEM_LENGTH ];
     long slot = bucket + ( active_slot * INDEX_ITEM );
@@ -1077,8 +1087,11 @@ static sh_status_e replace_in_bucket(
 
     if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
 
-        return SH_ERR_CONFLICT;
+        result.token = array[ slot + DATA_CNTR ];
+        result.status = SH_ERR_CONFLICT;
+        return result;
     }
+    result.token = after.high;
 
     // update size in bucket
     if ( prev_size != pair_size ) {
@@ -1093,7 +1106,7 @@ static sh_status_e replace_in_bucket(
         filter = array[ bucket + FILTER ];
     }
 
-    return SH_OK;
+    return result;
 }
 
 
@@ -1173,12 +1186,13 @@ static void reindex_pair(
 
         if ( scan_for_empty_slot( map, pair, hash, bucket, bitmap, &empty, &index ) == SH_ERR_CONFLICT ) {
 
-            break;
+            return;
         }
 
-        if ( add_to_bucket( array, hash, pair, length, bucket, empty, bitmap, counter ) == SH_OK ) {
+        sm_item_s result = add_to_bucket( array, hash, pair, length, bucket, empty, bitmap, counter );
+        if ( result.status == SH_OK ) {
             
-            break;
+            return;
         }
     }
 }
@@ -1583,23 +1597,42 @@ static sh_status_e remove_from_bucket(
     long hash,          // computed hash value
     long index,         // bucket index of k/v pair to be removed
     long bucket,        // slot index for bucket
-    long bitmap,        // previous captured bucket bitmap 
-    long counter        // previous captured bucket bitmap version counter
+    long token          // state token
         
 )   {
 
-    DWORD before = { .low = bitmap & ( long ) IDX_BLOCK, .high = counter };
-    DWORD after = { .low = bitmap & ~( 1 << index ), .high = before.high + 1 };
-    if ( !DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
+    long slot = bucket + ( index * INDEX_ITEM );
+
+    // clear item in bucket with empty key/value pair slot
+    DWORD before = { .low = array[ slot + DATA_SLOT ], .high = array[ slot + DATA_CNTR ]  };
+
+    if ( token != 0 ) {
+
+        before.high = token; 
+    }
+
+    DWORD after = { 0 };
+
+    if ( !DWCAS( (DWORD*)&array[ slot + DATA_SLOT ], &before, after ) ) {
 
         return SH_ERR_CONFLICT;
     }
 
-    long slot = bucket + ( index * INDEX_ITEM );
-    array[ slot + DATA_CNTR ] = 0;
-    array[ slot + DATA_SLOT ] = 0;
     array[ slot + HASH ] = 0;
     array[ slot + ITEM_LENGTH ] = 0;
+
+    while ( true ) {
+    
+        before.low = array[ bucket + BITMAP ] & ( uint64_t ) IDX_BLOCK;
+        before.high = array[ bucket + BTMP_CNTR ];
+        after.low = before.low & ~( 1 << index );
+        after.high = before.high + 1;
+        if ( DWCAS( (DWORD*)&array[ bucket ], &before, after ) ) {
+
+            break;
+        }
+    }
+
     return SH_OK;
 }
 
@@ -1655,10 +1688,11 @@ static sm_item_s hash_add(
                 continue;
             }
 
-            //TODO pair_slot = evict_bucket( map, hash, &empty, &bitmap, &counter );
+            //TODO evict_bucket( map, array, bucket );
+            continue;
         }
 
-        result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
+        result = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
         if ( result.status == SH_OK ) {
             
             ( void ) AFA( &array[ COUNT ], 1 );
@@ -1708,7 +1742,7 @@ static sm_item_s hash_put(
         if ( result.status == SH_OK ) { 
 
             long old_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
-            result.status = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, 0 );
+            result = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, 0 );
             if ( result.status == SH_OK ) {
             
                 copy_to_buffer( array, old_slot, &result, buffer, buff_size );
@@ -1735,10 +1769,11 @@ static sm_item_s hash_put(
                 continue;
             }
 
-            //TODO pair_slot = evict_bucket( map, hash, &empty, &bitmap, &counter );
+            //TODO evict_bucket( map, array, bucket );
+            continue;
         }
 
-        result.status = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
+        result = add_to_bucket( array, hash, pair_slot, pair_size, bucket, empty, bitmap, counter );
         if ( result.status == SH_OK ) {
             
             ( void ) AFA( &array[ COUNT ], 1 );
@@ -1749,6 +1784,79 @@ static sm_item_s hash_put(
     unguard_bucket( array, bucket );
     return result;
 }
+
+
+static sm_item_s hash_delete(
+
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
+
+)   {
+
+    sm_item_s result = { .status = SH_ERR_NO_MATCH };
+    long *array = map->current->array;
+    long hash = compute_hash( array[ BUCKET_COUNT ], key, klength, map->seed );
+    long bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+    view_s view = insure_in_range( (shr_base_s*)map, bucket + BUCKET_SIZE );
+    array = view.extent->array;
+    guard_bucket( array, bucket );
+
+    while ( true ) {
+
+        if ( is_expanded( map ) ) {
+        
+            reindex_indices( map ); 
+            bucket = ( ( hash & ( array[ CRNT_BKT_CNT ] - 1 ) ) * BUCKET_SIZE ) + array[ CURRENT_IDX ];
+        }
+     
+        long empty = 0;
+        long index = 0;
+        long bitmap = array[ bucket + BITMAP ];
+        volatile long counter = array[ bucket + BTMP_CNTR ]; 
+
+        result = scan_for_match( map, hash, key, klength, bucket, bitmap, &empty, &index );
+
+        if ( counter != array[ bucket + BTMP_CNTR ] ) {
+
+            continue;
+        }
+        
+        if ( result.status != SH_OK ) {
+
+            break;
+        }
+
+        long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
+        ( void ) copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
+        result.status = remove_from_bucket( array, hash, index, bucket, token );
+        if ( result.status != SH_OK ) {
+
+            break;
+        }
+
+        ( void ) AFS( &map->current->array[ COUNT ], 1 );
+
+        if ( is_bucket_contended( array, bucket ) ) {
+
+            // add k/v memory to defer list
+            result.status = release_pair( map, pair_slot );
+
+        } else {
+        
+            // release uncontended k/v memory
+            result.status = free_data_slots( (shr_base_s*)map, pair_slot );
+        }
+        break;
+    }
+      
+    unguard_bucket( array, bucket );
+    return result;
+}
+
 
 
 static sm_item_s hash_find(
@@ -1889,7 +1997,7 @@ static sm_item_s hash_update(
     if ( result.status == SH_OK ) { 
 
         long old_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
-        result.status = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, token );
+        result = replace_in_bucket( array, hash, pair_slot, pair_size, bucket, index, token );
         if ( result.status == SH_OK ) {
         
             copy_to_buffer( array, old_slot, &result, buffer, buff_size );
@@ -2006,7 +2114,7 @@ static sm_item_s hash_remove(
 
         long pair_slot = array[ bucket + ( index * INDEX_ITEM ) + DATA_SLOT ];
         ( void ) copy_to_buffer( array, pair_slot, &result, buffer, buff_size );
-        result.status = remove_from_bucket( array, hash, index, bucket, bitmap, counter );
+        result.status = remove_from_bucket( array, hash, index, bucket, 0 );
         if ( result.status != SH_OK ) {
 
             continue;
@@ -2111,6 +2219,41 @@ extern sh_status_e shr_map_create(
     }
 
     return status;
+}
+
+
+extern sm_item_s shr_map_delete(
+    shr_map_s *map,			    // pointer to map structure -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size,          // pointer to size of buffer -- not NULL
+    long token                  // state token
+                                
+)   {
+
+    if (map == NULL ||
+        key == NULL ||
+        klength == 0 ||
+        buffer == NULL ||
+        buff_size == NULL ||
+        ( *buffer != NULL && *buff_size == 0 ) ||
+        token == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_ARG };
+    }
+
+    if ( map->current->array[ COUNT ] == 0 ) {
+
+        return (sm_item_s) { .status = SH_ERR_EMPTY };
+    }
+
+    guard_map_memory( map );
+
+    sm_item_s result = hash_delete( map, key, klength, buffer, buff_size, token );
+
+    unguard_map_memory( map );
+    return result;
 }
 
 
@@ -2717,7 +2860,7 @@ extern sm_item_s shr_map_update(
          buffer == NULL ||
          buff_size == NULL || 
          ( *buffer != NULL && *buff_size == 0 ) ||
-         token == 0) {
+         token == 0 ) {
 
         return (sm_item_s) { .status = SH_ERR_ARG };
     }
@@ -2782,7 +2925,7 @@ extern sm_item_s shr_map_updatev(
          buffer == NULL ||
          buff_size == NULL || 
          ( *buffer != NULL && *buff_size == 0 ) ||
-         token == 0) {
+         token == 0 ) {
 
         return (sm_item_s) { .status = SH_ERR_ARG };
     }
