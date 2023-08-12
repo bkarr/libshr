@@ -594,6 +594,11 @@ static long copy_kv_pair(
 
 )   {
 
+    if ( is_at_limit( map ) ) {
+
+        return -1;
+    }
+    
     long kslots = calc_data_slots( klength );
     long vslots = calc_data_slots( vlength );
     long space = DATA_HDR + kslots + vslots;
@@ -601,7 +606,11 @@ static long copy_kv_pair(
     view_s view = alloc_data_slots( (shr_base_s*)map, space );
     long current = view.slot;
 
-    //TODO if no allocation returned, invoke cache eviction
+    while ( current == 0 ) {
+        //TODO if no allocation returned, invoke cache eviction
+        view = alloc_data_slots( (shr_base_s*)map, space );
+        current = view.slot;
+    }
 
     if ( current >= HDR_END ) {
 
@@ -663,6 +672,11 @@ static long copy_kv_vector(
         return -1;
     }
 
+    if ( is_at_limit( map ) ) {
+
+        return -1;
+    }
+    
     long kslots = calc_data_slots( klength );
     long vslots = calc_vector_slots( vector, vcnt );
     long space = DATA_HDR + kslots + vslots;
