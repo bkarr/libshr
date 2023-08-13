@@ -594,11 +594,6 @@ static long copy_kv_pair(
 
 )   {
 
-    if ( is_at_limit( map ) ) {
-
-        return -1;
-    }
-    
     long kslots = calc_data_slots( klength );
     long vslots = calc_data_slots( vlength );
     long space = DATA_HDR + kslots + vslots;
@@ -606,22 +601,25 @@ static long copy_kv_pair(
     view_s view = alloc_data_slots( (shr_base_s*)map, space );
     long current = view.slot;
 
-    while ( current == 0 ) {
+    if ( current < HDR_END ) {
+
         //TODO if no allocation returned, invoke cache eviction
         view = alloc_data_slots( (shr_base_s*)map, space );
         current = view.slot;
     }
 
-    if ( current >= HDR_END ) {
+    if ( current < HDR_END ) {
 
-        long *array = view.extent->array;
-        *size = array[ current ];
-        array[ current + TYPE_VEC ] = ( ( long ) type << 32) | 1;
-        array[ current + DATA_LENGTH ] = vlength;
-        array[ current + KEY_LENGTH ] = klength;
-        memcpy( &array[ current + DATA_HDR ], key, klength );
-        memcpy( &array[ current + DATA_HDR + kslots ], value, vlength );
+        return current;
     }
+
+    long *array = view.extent->array;
+    *size = array[ current ];
+    array[ current + TYPE_VEC ] = ( ( long ) type << 32) | 1;
+    array[ current + DATA_LENGTH ] = vlength;
+    array[ current + KEY_LENGTH ] = klength;
+    memcpy( &array[ current + DATA_HDR ], key, klength );
+    memcpy( &array[ current + DATA_HDR + kslots ], value, vlength );
 
     return current;
 }
@@ -672,11 +670,6 @@ static long copy_kv_vector(
         return -1;
     }
 
-    if ( is_at_limit( map ) ) {
-
-        return -1;
-    }
-    
     long kslots = calc_data_slots( klength );
     long vslots = calc_vector_slots( vector, vcnt );
     long space = DATA_HDR + kslots + vslots;
@@ -684,36 +677,45 @@ static long copy_kv_vector(
     view_s view = alloc_data_slots( (shr_base_s*)map, space );
     long current = view.slot;
 
-    if ( current >= HDR_END ) {
+    if ( current < HDR_END ) {
 
-        long *array = view.extent->array;
-        *size = array[ current ];
-        array[ current + TYPE_VEC ] = ( (long)type << 32) | vcnt;
-        array[ current + DATA_LENGTH ] = vslots << SZ_SHIFT;
-        array[ current + KEY_LENGTH ] = klength;
-        memcpy( &array[ current + DATA_HDR ], key, klength );
-        long slot = current;
-        slot += DATA_HDR;
-        slot += kslots;
+        //TODO if no allocation returned, invoke cache eviction
+        view = alloc_data_slots( (shr_base_s*)map, space );
+        current = view.slot;
+    }
 
-        for ( int i = 0; i < vcnt; i++ ) {
+    if ( current < HDR_END ) {
 
-            if ( vector[i].type <= 0 ||
-                 vector[i].len <= 0  ||
-                 vector[i].base == NULL ) {
+        return current;
+    }
 
-                return -1;
-            }
+    long *array = view.extent->array;
+    *size = array[ current ];
+    array[ current + TYPE_VEC ] = ( (long)type << 32) | vcnt;
+    array[ current + DATA_LENGTH ] = vslots << SZ_SHIFT;
+    array[ current + KEY_LENGTH ] = klength;
+    memcpy( &array[ current + DATA_HDR ], key, klength );
+    long slot = current;
+    slot += DATA_HDR;
+    slot += kslots;
 
-            array[ slot++ ] = vector[ i ].type;
-            array[ slot++ ] = vector[ i ].len;
-            memcpy( &array[ slot ], vector[ i ].base, vector[ i ].len );
-            slot += vector[ i ].len >> SZ_SHIFT;
+    for ( int i = 0; i < vcnt; i++ ) {
 
-            if ( vector[ i ].len & REM ) {
+        if ( vector[i].type <= 0 ||
+             vector[i].len <= 0  ||
+             vector[i].base == NULL ) {
 
-                slot++;
-            }
+            return -1;
+        }
+
+        array[ slot++ ] = vector[ i ].type;
+        array[ slot++ ] = vector[ i ].len;
+        memcpy( &array[ slot ], vector[ i ].base, vector[ i ].len );
+        slot += vector[ i ].len >> SZ_SHIFT;
+
+        if ( vector[ i ].len & REM ) {
+
+            slot++;
         }
     }
 
@@ -1702,7 +1704,7 @@ static sm_item_s hash_add(
                 continue;
             }
 
-            //TODO evict_bucket( map, array, bucket );
+            //TODO evict_bucket( map, array, bucket, 0 );
             continue;
         }
 
@@ -1783,7 +1785,7 @@ static sm_item_s hash_put(
                 continue;
             }
 
-            //TODO evict_bucket( map, array, bucket );
+            //TODO evict_bucket( map, array, bucket, 0 );
             continue;
         }
 
