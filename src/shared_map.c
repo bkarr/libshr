@@ -456,7 +456,7 @@ static void clean_defer_list(
         long data_slot = defer_remove( map );
         if ( data_slot >= BASE ) {
          
-            (void) free_data_slots( (shr_base_s*) map, data_slot ); 
+            ( void ) free_data_slots( (shr_base_s*) map, data_slot ); 
         }
     }
 }
@@ -469,8 +469,8 @@ static void guard_map_memory(
 
 )   {
 
-    (void) AFA( &map->accessors, 1 );   // protect extents
-    (void) AFA( &map->current->array[ ACCESSORS ], 1 );
+    ( void ) AFA( &map->accessors, 1 );   // protect extents
+    ( void ) AFA( &map->current->array[ ACCESSORS ], 1 );
     clean_defer_list( map );
 }
 
@@ -483,8 +483,8 @@ static void unguard_map_memory(
 
     release_prev_extents( (shr_base_s*) map );
     clean_defer_list( map );
-    (void) AFS( &map->current->array[ ACCESSORS ], 1 );
-    (void) AFS( &map->accessors, 1 );
+    ( void ) AFS( &map->current->array[ ACCESSORS ], 1 );
+    ( void ) AFS( &map->accessors, 1 );
 }
 
 
@@ -494,7 +494,7 @@ static void guard_bucket(
     long bucket
         
 )   {
-    (void) AFA( &array[ bucket + BKT_ACCESSORS ], 1 );
+    ( void ) AFA( &array[ bucket + BKT_ACCESSORS ], 1 );
 }
 
 
@@ -504,7 +504,7 @@ static void unguard_bucket(
     long bucket
         
 )   {
-    (void) AFS( &array[ bucket + BKT_ACCESSORS ], 1 );
+    ( void ) AFS( &array[ bucket + BKT_ACCESSORS ], 1 );
 }
 
 
@@ -1111,7 +1111,7 @@ static sm_item_s replace_in_bucket(
 
     // update size in bucket
     if ( prev_size != pair_size ) {
-        (void) CAS( &array[ slot + ITEM_LENGTH ], &prev_size, pair_size );
+        ( void ) CAS( &array[ slot + ITEM_LENGTH ], &prev_size, pair_size );
     }
 
     // update size filter in bucket
@@ -1159,7 +1159,7 @@ static sh_status_e scan_for_empty_slot(
             continue;            
         }
 
-        if ( array[ item + DATA_SLOT] == pair ) {
+        if ( array[ item + DATA_SLOT ] == pair ) {
         
             return SH_ERR_CONFLICT;
         }
@@ -1392,6 +1392,9 @@ static sh_status_e allocate_new_index(
     view_s view = alloc_data_slots( (shr_base_s*)map, new_bkt_cnt * BUCKET_SIZE );
     if ( view.slot == 0 ) {
 
+        prev = array[ current_idx ];
+        block = prev & ( uint64_t ) IDX_BLOCK;
+        ( void ) CAS( &array[ current_idx ], &prev, block );
         return SH_ERR_NOMEM;
     }
     array = view.extent->array;
@@ -1653,6 +1656,57 @@ static sh_status_e remove_from_bucket(
 }
 
 
+static int scan_for_oldest(
+
+    long *array,        // pointer to map array
+    long bucket         // slot index for bucket
+                          
+)   {
+
+    long bitmap = array[ bucket + BITMAP ];
+    int min_index = 0;
+    long min_token = LONG_MAX;
+    long mask = 1;
+
+    for ( int i = 1; i <= BUCKET_COUNT; i++ ) {
+
+        mask <<= 1;
+        if ( !( bitmap & mask ) ) {
+            
+            continue;            
+        }
+
+        long item = bucket + ( i * INDEX_ITEM );
+        if ( array[ item + DATA_CNTR ] < min_token ) {
+
+            min_index = i;
+            min_token = array[ item + DATA_CNTR ];
+        } 
+    }
+
+    return min_index;
+}
+
+
+static sh_status_e evict_bucket(
+
+    long *array,        // pointer to map array
+    long bucket         // slot index for bucket
+                          
+)   {
+
+    int index = scan_for_oldest( array, bucket );
+    long item = bucket + ( index * INDEX_ITEM );
+    sh_status_e status =  remove_from_bucket( array, array[ item + HASH ], index, bucket, array[ item + DATA_CNTR ] );
+    if ( status == SH_OK ) {
+    
+        ( void ) AFS( &array[ COUNT ], 1 );
+    }
+
+    return status;
+}
+
+
 static sm_item_s hash_add(
 
     shr_map_s *map,             // pointer to map struct -- not NULL
@@ -1704,7 +1758,7 @@ static sm_item_s hash_add(
                 continue;
             }
 
-            //TODO evict_bucket( map, array, bucket, 0 );
+            ( void ) evict_bucket( array, bucket );
             continue;
         }
 
@@ -1785,7 +1839,7 @@ static sm_item_s hash_put(
                 continue;
             }
 
-            //TODO evict_bucket( map, array, bucket, 0 );
+            ( void ) evict_bucket( array, bucket );
             continue;
         }
 
