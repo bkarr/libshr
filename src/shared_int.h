@@ -49,7 +49,7 @@ enum shr_constants
 enum shr_base_disp
 {
 
-    TAG = 0,                                        // queue identifier tag
+    OBJ = 0,                                        // memory object identifier
     VERSION,                                        // implementation version number
     SIZE,                                           // size of mmapped array in slots
     EXPAND_SIZE,                                    // size for current expansion
@@ -352,6 +352,14 @@ extern sh_status_e free_data_slots(
 extern view_s alloc_data_slots(
     shr_base_s *base,   // pointer to base struct -- not NULL
     long slots          // number of slots to allocate
+);
+
+extern view_s realloc_pooled_mem(
+    shr_base_s *base,           // pointer to base struct -- not NULL
+    long slot_count,            // size as number of slots
+    long head,                  // list head slot
+    long head_counter,          // list head counter slot
+    long tail                   // list tail slot
 );
 
 extern void release_prev_extents(

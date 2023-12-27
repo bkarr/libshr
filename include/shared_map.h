@@ -12,6 +12,8 @@ extern "C" {
 
 typedef struct shr_map shr_map_s;
 
+typedef sh_status_e (*shr_clbck_f)(void *, uint8_t *, size_t);
+
 typedef struct  sm_item
 {
     sh_status_e status;         // returned status
@@ -182,6 +184,58 @@ extern sm_item_s shr_map_updatev(
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size,          // pointer to size of buffer -- not NULL
     long token                  // state token
+);
+
+
+extern sh_status_e shr_map_prep(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    sh_vec_s *vector,           // pointer to vector of items -- not NULL
+    int vcnt,                   // count of vector array -- must be >= 1
+    sh_type_e repr,             // type represented by vector
+    long *handle                // pointer to k/v pair handle -- not NULL
+);
+
+
+extern sh_status_e shr_map_invoke(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    long handle,                // handle to k/v pair item
+    int field,                  // data field desired 
+    shr_clbck_f function        // callback function to be invoked with k/v pair field address
+);
+
+
+extern sh_status_e shr_map_commit(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    long handle                 // handle to k/v pair item
+);
+
+
+extern sh_status_e shr_map_release(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    long handle                 // handle to k/v pair item
+);
+
+
+extern sh_status_e shr_map_get_handle(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    uint8_t *key,               // pointer to key -- not NULL
+    size_t klength,             // length of key -- greater than 0
+    long *handle                // pointer to handle -- not NULL
+);
+
+
+extern sm_item_s shr_map_get_item(
+    shr_map_s *map,             // pointer to map struct -- not NULL
+    long handle,                // handle to k/v pair item
+    void **buffer,              // address of buffer pointer -- not NULL
+    size_t *buff_size           // pointer to size of buffer -- not NULL
+);
+
+
+extern sh_status_e shr_map_get_trim(
+    shr_map_s *map              // pointer to map struct -- not NULL
 );
 
 

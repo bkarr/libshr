@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2018-2022 Bryan Karr
+Copyright (c) 2018-2024 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -443,7 +443,7 @@ extern sh_status_e create_base_object(
     (*base)->current->array[ EXPAND_SIZE ] = (*base)->current->size;
     (*base)->current->array[ DATA_ALLOC ] = BASE;
     (*base)->current->array[ VERSION ] = version;
-    memcpy(&(*base)->current->array[ TAG ], tag, tag_len);
+    memcpy(&(*base)->current->array[ OBJ ], tag, tag_len);
 
     return SH_OK;
 }
@@ -622,7 +622,7 @@ extern view_s expand(
     long prev = array[ SIZE ] << SZ_SHIFT;
 
     // enforce size limit if specified
-    if ( array[ MAX_SIZE ] != 0 && size >= array[ MAX_SIZE ] ) {
+    if ( array[ MAX_SIZE ] != 0 && size > array[ MAX_SIZE ] ) {
     
         view.status = SH_ERR_NOMEM;
         return view;
@@ -987,7 +987,7 @@ extern view_s alloc_new_data(
 /*
     realloc_pooled_mem -- attempt to allocate previously freed slots
 */
-static view_s realloc_pooled_mem(
+extern view_s realloc_pooled_mem(
 
     shr_base_s *base,           // pointer to base struct -- not NULL
     long slot_count,            // size as number of slots

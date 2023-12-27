@@ -1332,7 +1332,7 @@ static bool is_valid_queue(
 
 )   {
 
-    if ( memcmp( &q->current->array[ TAG ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
+    if ( memcmp( &q->current->array[ OBJ ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
 
         return false;
     }
@@ -3441,7 +3441,7 @@ extern bool shr_q_is_valid(
         return false;
     }
 
-    if ( memcmp( &array[ TAG ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
+    if ( memcmp( &array[ OBJ ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
 
         munmap( array, size );
         close( fd );
