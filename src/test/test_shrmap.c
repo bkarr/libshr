@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2022-2023 Bryan Karr
+Copyright (c) 2022-2025 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -2280,7 +2280,7 @@ static void test_put_bucket_eviction( void ) {
     int prev_count = shr_map_count( map );
     key = "one";
     klen = strlen(key);
-    value = "test one 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test one 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2290,7 +2290,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 1 == shr_map_count( map ) );
     key = "two";
     klen = strlen(key);
-    value = "test two 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test two 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2300,7 +2300,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 2 == shr_map_count( map ) );
     key = "three";
     klen = strlen(key);
-    value = "test three 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test three 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2310,7 +2310,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 3 == shr_map_count( map ) );
     key = "four";
     klen = strlen(key);
-    value = "test four 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test four 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2320,7 +2320,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 4 == shr_map_count( map ) );
     key = "five";
     klen = strlen(key);
-    value = "test five 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test five 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2330,7 +2330,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 5 == shr_map_count( map ) );
     key = "six";
     klen = strlen(key);
-    value = "test six 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test six 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2340,7 +2340,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 6 == shr_map_count( map ) );
     key = "seven";
     klen = strlen(key);
-    value = "test seven 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test seven 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2350,7 +2350,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 7 == shr_map_count( map ) );
     key = "eight";
     klen = strlen(key);
-    value = "test eight 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test eight 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2360,7 +2360,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 8 == shr_map_count( map ) );
     key = "nine";
     klen = strlen(key);
-    value = "test nine 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test nine 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2370,7 +2370,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 9 == shr_map_count( map ) );
     key = "ten";
     klen = strlen(key);
-    value = "test ten 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test ten 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2380,7 +2380,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 10 == shr_map_count( map ) );
     key = "eleven";
     klen = strlen(key);
-    value = "test eleven 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test eleven 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2390,7 +2390,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 11 == shr_map_count( map ) );
     key = "twelve";
     klen = strlen(key);
-    value = "test twelve 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test twelve 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2400,7 +2400,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 12 == shr_map_count( map ) );
     key = "thirteen";
     klen = strlen(key);
-    value = "test thirteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test thirteen 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2410,7 +2410,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 13 == shr_map_count( map ) );
     key = "fourteen";
     klen = strlen(key);
-    value = "test fourteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test fourteen 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2420,7 +2420,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 14 == shr_map_count( map ) );
     key = "fifteen";
     klen = strlen(key);
-    value = "test fifteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test fifteen 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2430,7 +2430,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 15 == shr_map_count( map ) );
     key = "sixteen";
     klen = strlen(key);
-    value = "test sixteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test sixteen 1234567890123456789012345678901234567890";
     vlen = strlen(value);
     result = shr_map_put(map, (uint8_t*)key, klen, value, vlen, &buffer, &buff_size);
     assert(result.status == SH_OK);
@@ -2440,7 +2440,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 16  == shr_map_count( map ) );
     key = "seventeen";
     klen = strlen( key );
-    value = "test seventeen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test seventeen 1234567890123456789012345678901234567890";
     vlen = strlen( value );
     result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -2451,7 +2451,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 17 == shr_map_count( map ) );
     key = "eighteen";
     klen = strlen( key );
-    value = "test eighteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test eighteen 1234567890123456789012345678901234567890";
     vlen = strlen( value );
     result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -2462,7 +2462,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 18 == shr_map_count( map ) );
     key = "nineteen";
     klen = strlen( key );
-    value = "test nineteen 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test nineteen 1234567890123456789012345678901234567890";
     vlen = strlen( value );
     result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -2473,7 +2473,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 19 == shr_map_count( map ) );
     key = "twenty";
     klen = strlen( key );
-    value = "test twenty 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test twenty 1234567890123456789012345678901234567890";
     vlen = strlen( value );
     result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
     assert( result.status == SH_OK );
@@ -2484,7 +2484,7 @@ static void test_put_bucket_eviction( void ) {
     assert( prev_count + 20 == shr_map_count( map ) );
     key = "twenty one";
     klen = strlen( key );
-    value = "test twenty one 1234567890123456789012345678901234567890123456789012345678901234567890";
+    value = "test twenty one 1234567890123456789012345678901234567890";
     vlen = strlen( value );
     result = shr_map_put( map, (uint8_t*) key, klen, value, vlen, &buffer, &buff_size );
     assert( result.status == SH_OK );

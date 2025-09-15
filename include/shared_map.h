@@ -194,13 +194,15 @@ extern sh_status_e shr_map_prep(
     sh_vec_s *vector,           // pointer to vector of items -- not NULL
     int vcnt,                   // count of vector array -- must be >= 1
     sh_type_e repr,             // type represented by vector
-    long *handle                // pointer to k/v pair handle -- not NULL
+    long *handle,               // pointer to handle -- not NULL
+    long *token                 // state token -- not NULL
 );
 
 
 extern sh_status_e shr_map_invoke(
     shr_map_s *map,             // pointer to map struct -- not NULL
     long handle,                // handle to k/v pair item
+    long token,                 // state token
     int field,                  // data field desired 
     shr_clbck_f function        // callback function to be invoked with k/v pair field address
 );
@@ -208,13 +210,15 @@ extern sh_status_e shr_map_invoke(
 
 extern sh_status_e shr_map_commit(
     shr_map_s *map,             // pointer to map struct -- not NULL
-    long handle                 // handle to k/v pair item
+    long handle,                // handle to k/v pair item
+    long token                  // state token
 );
 
 
 extern sh_status_e shr_map_release(
     shr_map_s *map,             // pointer to map struct -- not NULL
-    long handle                 // handle to k/v pair item
+    long handle,                // handle to k/v pair item
+    long token                  // state token
 );
 
 
@@ -222,20 +226,17 @@ extern sh_status_e shr_map_get_handle(
     shr_map_s *map,             // pointer to map struct -- not NULL
     uint8_t *key,               // pointer to key -- not NULL
     size_t klength,             // length of key -- greater than 0
-    long *handle                // pointer to handle -- not NULL
+    long *handle,               // pointer to handle -- not NULL
+    long *token                 // state token -- not NULL
 );
 
 
 extern sm_item_s shr_map_get_item(
     shr_map_s *map,             // pointer to map struct -- not NULL
     long handle,                // handle to k/v pair item
+    long token,                 // state token
     void **buffer,              // address of buffer pointer -- not NULL
     size_t *buff_size           // pointer to size of buffer -- not NULL
-);
-
-
-extern sh_status_e shr_map_get_trim(
-    shr_map_s *map              // pointer to map struct -- not NULL
 );
 
 
