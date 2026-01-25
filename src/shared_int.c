@@ -795,7 +795,7 @@ extern bool set_flag(
     assert(array != NULL);
     assert(indicator != 0);
 
-    volatile long prev = (volatile long) array[ FLAGS ];
+    long prev = array[ FLAGS ];
 
     while ( !( prev & indicator ) ) {
 
@@ -805,7 +805,7 @@ extern bool set_flag(
 
         }
 
-        prev = (volatile long) array[ FLAGS ];
+        prev = array[ FLAGS ];
     }
 
     return false;
@@ -835,7 +835,7 @@ extern bool clear_flag(
     assert(indicator != 0);
 
     long mask = ~indicator;
-    volatile long prev = (volatile long) array[ FLAGS ];
+    long prev = array[ FLAGS ];
 
     while ( prev & indicator ) {
 
@@ -845,7 +845,7 @@ extern bool clear_flag(
 
         }
 
-        prev = (volatile long) array[ FLAGS ];
+        prev = array[ FLAGS ];
     }
 
     return false;
@@ -902,7 +902,7 @@ extern void add_end(
     // assert(slot >= BASE);
     // assert(tail > 0);
 
-    atomictype * volatile array = (atomictype*) base->current->array;
+    atomictype *array = (atomictype*) base->current->array;
     long gen = AFA( &array[ ID_CNTR ], 1 );
     array[ slot ] = slot;
     array[ slot + 1 ] = gen;
@@ -910,10 +910,10 @@ extern void add_end(
 
     while( true ) {
 
-        DWORD tail_before = *( (DWORD * volatile) &array[ tail ] );
+        DWORD tail_before = *( (DWORD *) &array[ tail ] );
         long next = tail_before.low;
         view_s view = insure_in_range( base, next );
-        array = (atomictype * volatile) view.extent->array;
+        array = (atomictype *) view.extent->array;
 
         if ( tail_before.low == array[ next ] ) {
 
@@ -926,7 +926,7 @@ extern void add_end(
 
         } else {
 
-            DWORD tail_after = *( (DWORD* volatile) &array[ next ] );
+            DWORD tail_after = *( (DWORD*) &array[ next ] );
             DWCAS( (DWORD*) &array[ tail ], &tail_before, tail_after );
 
         }
@@ -957,7 +957,7 @@ extern long remove_front(
 
     assert(base != NULL);
 
-    volatile long * volatile array = base->current->array;
+    long *array = base->current->array;
     DWORD before;
     DWORD after;
 
@@ -1206,7 +1206,7 @@ static long lookup_freed_data(
 
         view_s view = insure_in_range( base, before.low );
         array = view.extent->array;
-        after.low = (volatile long) array[ before.low ];
+        after.low = array[ before.low ];
         after.high = before.high + 1;
 
     } while ( !DWCAS( (DWORD*) &array[ bucket ], &before, after ) );

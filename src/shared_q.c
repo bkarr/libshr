@@ -593,7 +593,7 @@ static void update_empty_timestamp(
 
     struct timespec curr_time;
     clock_gettime( CLOCK_REALTIME, &curr_time );
-    struct timespec last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+    struct timespec last = *(struct timespec *) &array[ EMPTY_SEC ];
     DWORD next = { .low = curr_time.tv_sec, .high = curr_time.tv_nsec };
 
     while ( timespeccmp(&curr_time, &last, > ) ) {
@@ -604,7 +604,7 @@ static void update_empty_timestamp(
 
         }
 
-        last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+        last = *(struct timespec *) &array[ EMPTY_SEC ];
     }
 }
 
@@ -617,7 +617,7 @@ static void lifo_add(
 )   {
 
     view_s view = insure_in_range( (shr_base_s*) q, slot );
-    atomictype * volatile array = (atomictype*) view.extent->array;
+    atomictype *array = (atomictype*) view.extent->array;
 
     DWORD stack_before;
     DWORD stack_after;
@@ -626,7 +626,7 @@ static void lifo_add(
 
         array[ slot ] = array[ STACK_HEAD ];
         array[ slot + 1 ] = array[ STACK_HD_CNT ];
-        stack_before = *( (DWORD * volatile) &array[ slot ] );
+        stack_before = *( (DWORD *) &array[ slot ] );
         stack_after.low = slot;
         stack_after.high = stack_before.high + 1;
 
@@ -949,14 +949,14 @@ static void clear_empty_timestamp(
 
 )   {
 
-    volatile struct timespec last =
-        *(struct timespec * volatile) &array[ EMPTY_SEC ];
+    struct timespec last =
+        *(struct timespec *) &array[ EMPTY_SEC ];
 
     DWORD next = { .high = 0, .low = 0 };
 
     while ( !DWCAS( (DWORD*) &array[ EMPTY_SEC ], (DWORD*) &last, next ) ) {
 
-        last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+        last = *(struct timespec *) &array[ EMPTY_SEC ];
 
     }
 }
@@ -1085,7 +1085,7 @@ static long remove_top(
 )   {
 
     view_s view = { .status = SH_OK, .extent = q->current, .slot = 0 };
-    volatile long * volatile array = view.extent->array;
+    long *array = view.extent->array;
     DWORD before;
     DWORD after;
 
@@ -3099,8 +3099,8 @@ extern sh_status_e shr_q_timelimit(
 
     do {
 
-        prev.tv_sec = (volatile time_t) array[ LIMIT_SEC ];
-        prev.tv_nsec = (volatile long) array[ LIMIT_NSEC ];
+        prev.tv_sec = array[ LIMIT_SEC ];
+        prev.tv_nsec = array[ LIMIT_NSEC ];
 
     } while ( !DWCAS( (DWORD*) &array[ LIMIT_SEC ], (DWORD*) &prev, next ) );
 
@@ -3604,8 +3604,8 @@ extern sh_status_e shr_q_target_delay(
 
     do {
 
-        prev.tv_sec = (volatile time_t) array[ TARGET_SEC ];
-        prev.tv_nsec = (volatile long) array[ TARGET_NSEC ];
+        prev.tv_sec = array[ TARGET_SEC ];
+        prev.tv_nsec = array[ TARGET_NSEC ];
 
     } while ( !DWCAS( (DWORD*) &array[ TARGET_SEC ], (DWORD*) &prev, next ) );
 
