@@ -9,6 +9,8 @@ libshr is a C library implementing lock-free data structures in POSIX shared mem
 Version: 0.17.3
 License: MIT
 
+**Planned:** `shared_map` - associative map of key/value pairs (not yet implemented)
+
 ## Build Commands
 
 ```bash
@@ -33,6 +35,8 @@ make clean
 - `make all64` - 64-bit optimized build using x86 CAS/DWCAS instructions
 - `make all32` - 32-bit build
 - `make rh7` - RedHat 7 compatible build (uses gnu99 instead of gnu11)
+- `make debug` / `make debug64` - 64-bit debug build (no optimization)
+- `make debug32` - 32-bit debug build
 
 The build system creates:
 - `lib/libshr.a` - static library
@@ -45,6 +49,11 @@ The build system creates:
 ### Unit Tests
 ```bash
 make check
+
+# Run specific test suites (from src/ directory)
+cd src && make checkq64      # Queue tests only
+cd src && make checkint64    # Internal memory tests only
+cd src && make checkshr64    # Shared memory tests only
 ```
 Tests are located in `src/test/`:
 - `test_internal.c` - Tests internal memory allocation functions
@@ -127,8 +136,12 @@ The `sharedq` utility provides queue operations from the shell:
 ./sharedq -v list                     # Verbose listing
 ./sharedq -x remove <qname>           # Hex dump output
 ./sharedq destroy <qname>             # Destroy queue
+./sharedq drain <qname>               # Drain all items from queue
 ./sharedq monitor <qname>             # Monitor events
-./sharedq listen <qname>              # Listen for arrivals
+./sharedq listen <qname>              # Listen for add to empty queue
+./sharedq call <qname>                # Notify when removes block on empty queue
+./sharedq level <qname> <depth>       # Set event depth level
+./sharedq limit <qname> <seconds>     # Set time limit for timelimit event
 ```
 
 ## Platform Dependencies
