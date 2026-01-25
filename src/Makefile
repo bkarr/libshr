@@ -13,23 +13,47 @@ TESTMAP = test_shrmap
 TESTS = $(TESTINT) $(TESTSHR) $(TESTQ) $(TESTMAP)
 LIB = -lrt -lpthread -latomic
 
+# Architecture detection
+UNAME_M := $(shell uname -m)
+
+ifeq ($(UNAME_M),x86_64)
+    # x86_64: -mcx16 enables CMPXCHG16B for 128-bit atomics
+    ARCH_FLAGS = -mcx16
+else ifeq ($(UNAME_M),aarch64)
+    # ARM64: Select optimization level based on GRAVITON variable
+    ifeq ($(GRAVITON),5)
+        ARCH_FLAGS = -march=armv9.2-a+sve2+lse -mtune=neoverse-v2
+    else ifeq ($(GRAVITON),4)
+        ARCH_FLAGS = -mcpu=neoverse-v2
+    else ifeq ($(GRAVITON),3)
+        ARCH_FLAGS = -mcpu=neoverse-v1
+    else ifeq ($(GRAVITON),2)
+        ARCH_FLAGS = -mcpu=neoverse-n1
+    else
+        # Generic ARM64: -moutline-atomics provides runtime LSE detection
+        ARCH_FLAGS = -march=armv8-a -moutline-atomics
+    endif
+else ifeq ($(UNAME_M),i686)
+    ARCH_FLAGS = -m32
+endif
+
 all: all64
 
 rh7: CFLAGS = -I../include -g3 -fPIC -std=gnu99 -Wall
 rh7: all64
 
-all64: CFLAGS += -mcx16 -c -O3 -D__STDC_NO_ATOMICS__
+all64: CFLAGS += $(ARCH_FLAGS) -c -O3
 all64: shared shared_int shared_q
 
-all32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O1
+all32: CFLAGS += -m32 -c -O1
 all32: shared shared_int shared_q shared_map
 
 debug: debug64
 
-debug64: CFLAGS += -mcx16 -c -O0 -D__STDC_NO_ATOMICS__
-debug64: shared shared_int shared_q 
+debug64: CFLAGS += $(ARCH_FLAGS) -c -O0
+debug64: shared shared_int shared_q
 
-debug32: CFLAGS += -m32 -c -D__STDC_NO_ATOMICS__ -O0
+debug32: CFLAGS += -m32 -c -O0
 debug32: shared shared_int shared_q shared_map
 
 check: all64
@@ -41,26 +65,26 @@ check: all64
 		cd ..; \
 	done
 
-check64: CFLAGS += -mcx16 -DTESTMAIN -O0
+check64: CFLAGS += $(ARCH_FLAGS) -DTESTMAIN -O0
 check64: clean shared64 checkq64
 #check64: clean shared64 checkq64 checkmap64
 
-shared64: CFLAGS += -mcx16 -c -O0
+shared64: CFLAGS += $(ARCH_FLAGS) -c -O0
 shared64: shared shared_int
 
-checkq64: CFLAGS += -mcx16 -c -O0
+checkq64: CFLAGS += $(ARCH_FLAGS) -c -O0
 checkq64: shared64 shared_q
-	@cd test && $(MAKE) checkq64 && cd ..
+	@cd test && $(MAKE) ARCH_FLAGS="$(ARCH_FLAGS)" checkq64 && cd ..
 
 checkmap64: CFLAGS += -o $(TESTMAP)
 checkmap64: shared64 shared_map
 checkint64: shared64
-	@cd test && $(MAKE) checkint64 && cd ..
+	@cd test && $(MAKE) ARCH_FLAGS="$(ARCH_FLAGS)" checkint64 && cd ..
 
 checkshr64: shared64
-	@cd test && $(MAKE) checkshr64 && cd ..
+	@cd test && $(MAKE) ARCH_FLAGS="$(ARCH_FLAGS)" checkshr64 && cd ..
 
-check32: CFLAGS += -m32 -D__STDC_NO_ATOMICS_ -DTESTMAIN -O0
+check32: CFLAGS += -m32 -DTESTMAIN -O0
 check32: clean shared32 checkq32
 #	@for name in $(TESTS); do echo ./$$name; ./$$name; done
 

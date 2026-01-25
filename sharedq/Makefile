@@ -6,6 +6,9 @@ CC = gcc
 EXE = sharedq
 LIB = -L../lib -l:libshr.a -lrt -lpthread -latomic
 
+# Architecture detection
+UNAME_M := $(shell uname -m)
+
 all: all64
 
 rh7: CFLAGS = -I../include -g3 -O0 -std=gnu99 -Wall -o $(EXE)
@@ -14,7 +17,11 @@ rh7: main
 all64: CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
 all64: main
 
+ifeq ($(UNAME_M),x86_64)
 all32: CFLAGS = -m32 -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+else
+all32: CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
+endif
 all32: main
 
 debug: CFLAGS = -I../include -g3 -O0 -std=gnu11 -pedantic -Wall -o $(EXE)
