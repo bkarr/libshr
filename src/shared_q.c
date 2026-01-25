@@ -264,6 +264,8 @@ static long copy_value(
         array[ current + DATA_LENGTH ] = length;
         memcpy( &array[ current + DATA_HDR ], value, length );
 
+        /* Ensure all writes are visible before returning slot for publication */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
     }
 
     return current;
@@ -353,6 +355,9 @@ static long copy_vector(
 
             }
         }
+
+        /* Ensure all writes are visible before returning slot for publication */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
     }
 
     return current;
