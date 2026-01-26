@@ -27,19 +27,19 @@ libshr is a C library implementing lock-free data structures in POSIX shared mem
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Public Queue API                            │
-│   shr_q_create, shr_q_add, shr_q_remove, shr_q_monitor, etc.   │
+│   shr_q_create, shr_q_add, shr_q_remove, shr_q_monitor, etc.    │
 ├─────────────────────────────────────────────────────────────────┤
 │                   Queue Implementation                          │
-│   enq/deq, lifo_add/remove, fifo_add/remove, event handling    │
+│   enq/deq, lifo_add/remove, fifo_add/remove, event handling     │
 ├─────────────────────────────────────────────────────────────────┤
-│               Shared Memory Management                          │
-│   extent management, memory allocation, lock-free lists        │
+│               Shared Memory Management                          │ 
+│   extent management, memory allocation, lock-free lists         │
 ├─────────────────────────────────────────────────────────────────┤
 │                  Atomic Primitives                              │
-│   CAS, DWCAS, AFA, AFS (platform-specific implementations)     │
+│   CAS, DWCAS, AFA, AFS (platform-specific implementations)      │
 ├─────────────────────────────────────────────────────────────────┤
 │                 POSIX Shared Memory                             │
-│   shm_open, mmap, mremap, semaphores, signals                  │
+│   shm_open, mmap, mremap, semaphores, signals                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
