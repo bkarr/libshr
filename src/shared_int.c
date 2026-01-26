@@ -805,6 +805,7 @@ extern bool set_flag(
 
         }
 
+        SPIN_PAUSE();
         prev = array[ FLAGS ];
     }
 
@@ -845,6 +846,7 @@ extern bool clear_flag(
 
         }
 
+        SPIN_PAUSE();
         prev = array[ FLAGS ];
     }
 
@@ -876,6 +878,7 @@ extern void update_buffer_size(
 
         }
 
+        SPIN_PAUSE();
         buff_sz = array[ BUFFER ];
     }
 }
@@ -930,6 +933,8 @@ extern void add_end(
             DWCAS( (DWORD*) &array[ tail ], &tail_before, tail_after );
 
         }
+
+        SPIN_PAUSE();
     }
 }
 
@@ -1019,6 +1024,7 @@ extern view_s alloc_new_data(
 
         }
 
+        SPIN_PAUSE();
         view.extent = base->current;
         array = view.extent->array;
         node_alloc = array[ DATA_ALLOC ];
@@ -1117,15 +1123,22 @@ extern sh_status_e free_data_slots(
 
     DWORD after = { .low = slot };
 
-    do {
-        
+    while (true) {
+
         // point current memory at next allocation
         array[ slot + 1 ] = array[ bucket + 1 ];
         array[ slot ] = array[ bucket ];
         // init next bucket value
         after.high = array[ slot + 1 ] + 1;
 
-    } while ( !DWCAS( (DWORD*) &array[ bucket ], (DWORD*) &array[ slot ], after ) ); // push down stack
+        if ( DWCAS( (DWORD*) &array[ bucket ], (DWORD*) &array[ slot ], after ) ) {
+
+            break; // push down stack succeeded
+
+        }
+
+        SPIN_PAUSE();
+    }
 
     return SH_OK;
 }
@@ -1193,7 +1206,7 @@ static long lookup_freed_data(
 
     long *array = base->current->array;
 
-    do {
+    while (true) {
 
         before.low = array[ bucket ];
         before.high = array[ bucket + 1 ];
@@ -1209,7 +1222,14 @@ static long lookup_freed_data(
         after.low = array[ before.low ];
         after.high = before.high + 1;
 
-    } while ( !DWCAS( (DWORD*) &array[ bucket ], &before, after ) );
+        if ( DWCAS( (DWORD*) &array[ bucket ], &before, after ) ) {
+
+            break;
+
+        }
+
+        SPIN_PAUSE();
+    }
 
     array[ before.low ] =  1 << ( ( ( bucket - MEM_BKT_START ) >> 1 ) + 2 );
     return before.low;

@@ -237,6 +237,20 @@ static inline char DWCAS(
     );
 }
 
+/*============================================================================
+    Spin-Wait Pause Hint
+
+    Signals to the CPU that this is a spin-wait loop, reducing power
+    consumption and improving performance by avoiding memory order violations.
+============================================================================*/
+#if defined(__x86_64__) || defined(__i386__)
+    #define SPIN_PAUSE() __builtin_ia32_pause()
+#elif defined(__aarch64__)
+    #define SPIN_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+#else
+    #define SPIN_PAUSE() ((void)0)
+#endif
+
 
 extern sh_status_e convert_to_status(
     int err                 // errno value
