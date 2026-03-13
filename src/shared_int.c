@@ -1,7 +1,7 @@
 /*
 The MIT License (MIT)
 
-Copyright (c) 2018 Bryan Karr
+Copyright (c) 2018-2022 Bryan Karr
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -538,6 +538,34 @@ extern sh_status_e create_base_object(
 
 
 /*
+    prime_list -- intializes linked list with a single empty item
+
+    Note:  should only be called as part of intialization at creation
+*/
+extern void prime_list(
+
+    shr_base_s *base,           // pointer to base struct -- not NULL
+    long slot_count,            // size of item in array slots
+    long head,                  // queue head slot number
+    long head_counter,          // queue head gen counter
+    long tail,                  // queue tail slot number
+    long tail_counter           // queue tail gen counter
+
+)   {
+    long *array = base->current->array;
+    view_s view = alloc_new_data( base, slot_count );
+    array[ head ] = view.slot;
+    array[ head_counter ] = AFA( &array[ ID_CNTR ], 1 );
+    array[ tail ] = view.slot;
+    array[ tail_counter ] = array[ head_counter ];
+
+    // init item on queue
+    array[ array[ head ] ] = array[ tail ];
+    array[ array[ head ] + 1]  = array[ tail_counter ];
+}
+
+
+/*
     init_data_allocator -- initializes base structures needed for data
     allocation
 */
@@ -550,13 +578,9 @@ extern void init_data_allocator(
 
     long *array = base->current->array;
     array[ DATA_ALLOC ] = start;
-    view_s view = alloc_new_data( base, IDX_SIZE );
-    array[ FREE_HEAD ] = view.slot;
-    array[ FREE_HD_CNT ] = AFA( &array[ ID_CNTR ], 1 );
-    array[ FREE_TAIL ] = view.slot;
-    array[ FREE_TL_CNT ] = array[ FREE_HD_CNT ];
-    array[ array[ FREE_HEAD ] ] = array[ FREE_TAIL ];
-    array[ array[ FREE_HEAD ] + 1]  = array[ FREE_TL_CNT ];
+
+    // intialize free index item pool
+    prime_list( base, IDX_SIZE, FREE_HEAD, FREE_HD_CNT, FREE_TAIL, FREE_TL_CNT );
 }
 
 
@@ -1067,11 +1091,15 @@ extern view_s alloc_new_data(
 
 
 /*
-    realloc_idx_slots -- attempt to allocate previously freed idx slots
+    realloc_pooled_mem -- attempt to allocate previously freed slots
 */
-static view_s realloc_idx_slots(
+extern view_s realloc_pooled_mem(
 
-    shr_base_s *base     // pointer to base struct -- not NULL
+    shr_base_s *base,           // pointer to base struct -- not NULL
+    long slot_count,            // size as number of slots
+    long head,                  // list head slot
+    long head_counter,          // list head counter slot
+    long tail                   // list tail slot
 
 )   {
 
@@ -1079,21 +1107,21 @@ static view_s realloc_idx_slots(
     long *array = view.extent->array;
 
     // attempt to remove from free index node list
-    long gen = array[ FREE_HD_CNT ];
-    long node_alloc = array[ FREE_HEAD ];
+    long gen = array[ head_counter ];
+    long node_alloc = array[ head ];
 
-    while ( node_alloc != array[ FREE_TAIL ] ) {
+    while ( node_alloc != array[ tail ] ) {
 
-        node_alloc = remove_front( base, node_alloc, gen, FREE_HEAD, FREE_TAIL );
+        node_alloc = remove_front( base, node_alloc, gen, head, tail );
 
         if ( node_alloc > 0 ) {
 
-            view = insure_fit( base, node_alloc, IDX_SIZE );
+            view = insure_fit( base, node_alloc, slot_count );
             array = view.extent->array;
 
             if ( view.slot != 0 ) {
 
-                memset( (idx_leaf_s*)&array[ node_alloc ], 0, IDX_SIZE << SZ_SHIFT );
+                memset( (idx_leaf_s*)&array[ node_alloc ], 0, slot_count << SZ_SHIFT );
 
             }
 
@@ -1101,8 +1129,8 @@ static view_s realloc_idx_slots(
 
         }
 
-        gen = array[ FREE_HD_CNT ];
-        node_alloc = array[ FREE_HEAD ];
+        gen = array[ head_counter ];
+        node_alloc = array[ head ];
 
     }
 
@@ -1119,10 +1147,8 @@ extern view_s alloc_idx_slots(
 
 )   {
 
-    assert(base != NULL);
-
     // attempt to remove from free index node list
-    view_s view = realloc_idx_slots( base );
+    view_s view = realloc_pooled_mem( base, IDX_SIZE, FREE_HEAD, FREE_HD_CNT, FREE_TAIL );
     if ( view.slot != 0 ) {
 
         return view;
