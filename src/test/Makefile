@@ -13,15 +13,19 @@ TESTMAP = test_shrmap
 TESTS = $(TESTINT) $(TESTSHR) $(TESTQ) $(TESTMAP)
 LIB = -lrt -lpthread -latomic
 
+# ARCH_FLAGS passed from parent Makefile, or detect if run standalone
+UNAME_M := $(shell uname -m)
+ARCH_FLAGS ?= $(if $(filter x86_64,$(UNAME_M)),-mcx16,$(if $(filter aarch64,$(UNAME_M)),-march=armv8-a -moutline-atomics,))
+
 check: checkshr64 checkint64 checkq64
 
-checkq64: CFLAGS += -mcx16 ../shared_int.o ../shared.o ../shared_q.o -o $(TESTQ)
+checkq64: CFLAGS += $(ARCH_FLAGS) ../shared_int.o ../shared.o ../shared_q.o -o $(TESTQ)
 checkq64: clean test_shrq
 	./$(TESTQ)
-checkint64: CFLAGS += -mcx16 ../shared_int.o -o $(TESTINT)
+checkint64: CFLAGS += $(ARCH_FLAGS) ../shared_int.o -o $(TESTINT)
 checkint64: clean test_internal
 	./$(TESTINT)
-checkshr64: CFLAGS += -mcx16 ../shared.o -o $(TESTSHR)
+checkshr64: CFLAGS += $(ARCH_FLAGS) ../shared.o -o $(TESTSHR)
 checkshr64: clean test_shared
 	./$(TESTSHR)
 

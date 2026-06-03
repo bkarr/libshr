@@ -8,20 +8,26 @@
 #include <shared.h>
 
 
-#if (__STDC_VERSION__ >= 201112L)
-#include <stdatomic.h>
+/*============================================================================
+    Architecture Validation
+============================================================================*/
+#if !defined(__x86_64__) && !defined(__aarch64__) && !defined(__i386__)
+    #warning "Untested architecture: only x86_64, i386, and aarch64 are validated"
 #endif
 
-#if ((__STDC_VERSION__ < 201112L) || __STDC_NO_ATOMICS__)
+/*============================================================================
+    Type Definitions
+============================================================================*/
+
+/* Unified type - __atomic_* builtins work directly on volatile long */
 typedef volatile long atomictype;
-#else
-typedef atomic_long atomictype;
-#endif
 
-#ifdef __x86_64__
+/* Both x86_64 and aarch64 are 64-bit architectures with 8-byte longs */
+#if defined(__x86_64__) || defined(__aarch64__)
 #define SZ_SHIFT 3
 #define REM 7
 #else
+/* 32-bit fallback (i386) */
 #define SZ_SHIFT 2
 #define REM 3
 #endif
@@ -37,7 +43,7 @@ typedef atomic_long atomictype;
 enum shr_constants
 {
     PAGE_SIZE = 4096,       // initial size of memory mapped file
-    TSTACK_DEPTH = 16,      // depth of stack for critbit trie search
+    MEM_SLOTS = 48,         // number of memory bucket allocation slots
 };
 
 
@@ -46,35 +52,45 @@ enum shr_constants
 enum shr_base_disp
 {
 
-    TAG = 0,                        // queue identifier tag
-    VERSION,                        // implementation version number
-    SIZE,                           // size of queue array
-    EXPAND_SIZE,                    // size for current expansion
-    FREE_HEAD,                      // free node list head
-    FREE_HD_CNT,                    // free node head counter
-    DATA_ALLOC,                     // next available data allocation slot
-    COUNT,                          // number of items in structure
-    ROOT_FREE,                      // root of free data index
-    ROOT_FREE_CNT,                  // free data root version counter
-    BUFFER,                         // max buffer size needed to read
-    FLAGS,                          // configuration flag values
-    ID_CNTR,                        // unique id/generation counter
-    SPARE,                          // spare slot
-    FREE_TAIL,                      // free node list tail
-    FREE_TL_CNT,                    // free node tail counter
-    BASE
+    TAG = 0,                                        // queue identifier tag
+    VERSION,                                        // implementation version number
+    SIZE,                                           // size of queue array
+    EXPAND_SIZE,                                    // size for current expansion
+    FREE_HEAD,                                      // free node list head
+    FREE_HD_CNT,                                    // free node head counter
+    DATA_ALLOC,                                     // next available data allocation slot
+    COUNT,                                          // number of items in structure
+    BUFFER,                                         // max buffer size needed to read
+    FLAGS,                                          // configuration flag values
+    ID_CNTR,                                        // unique id/generation counter
+    SPARE,                                          // spare slot
+    FREE_TAIL,                                      // free node list tail
+    FREE_TL_CNT,                                    // free node tail counter
+    MEM_BKT_START,                                  // start of free memory bucket slots
+    MEM_BKT_END = (MEM_BKT_START + (MEM_SLOTS * 2)),    // allocate space for free memory bucket slots
+    BASE = MEM_BKT_END
 
 };
 
 
 typedef unsigned long ulong;
 
-typedef struct {
-
-    atomictype low;
-    atomictype high;
-
-} DWORD;
+/*
+ * DWORD: 128-bit double-word for atomic operations
+ *
+ * Alignment requirements:
+ * - x86_64: CMPXCHG16B requires 16-byte alignment
+ * - ARM64: CASP (LSE) requires 16-byte alignment
+ *
+ * The __int128 member enables unified atomic operations via __atomic_* builtins
+ */
+typedef union {
+    struct {
+        atomictype low;
+        atomictype high;
+    };
+    __int128 full;  /* For unified 128-bit atomic access */
+} __attribute__((aligned(16))) DWORD;
 
 
 /*
@@ -143,95 +159,96 @@ typedef struct shr_base
 
 
 
-#if ((__STDC_VERSION__ < 201112L) || __STDC_NO_ATOMICS__)
+/*============================================================================
+    Unified Atomic Operations
 
-#define AFS(mem, v) __sync_fetch_and_sub(mem, v)
-#define AFA(mem, v) __sync_fetch_and_add(mem, v)
+    These use __atomic_* builtins which work on both x86_64 and ARM64.
 
+    Memory Ordering:
+    - __ATOMIC_ACQ_REL provides acquire-release semantics
+    - On x86_64: Generates same instructions as __sync_* (LOCK prefix = full barrier)
+    - On ARM64: Generates proper barrier instructions (CASPAL, LDADDAL with LSE)
+
+    This unified approach:
+    - Eliminates architecture-specific #ifdef blocks
+    - Guarantees correctness on ARM's relaxed memory model
+    - Has zero performance cost on x86_64 (identical generated code)
+============================================================================*/
 
 /*
-    CAS -- atomic compare and swap
+ * Atomic Fetch-Add
+ * x86_64: Generates LOCK XADD
+ * ARM64:  Generates LDADDAL (LSE) or LDAXR/STLXR loop
+ */
+#define AFA(mem, v) __atomic_fetch_add(mem, v, __ATOMIC_ACQ_REL)
 
-    Note:  Use atomic builtins because cmpxchg instructions clobber ebx register
-    which is PIC register, so using builtins to be safe
-*/
+/*
+ * Atomic Fetch-Sub
+ * x86_64: Generates LOCK XADD (with negated value)
+ * ARM64:  Generates LDADDAL (LSE) with negated value
+ */
+#define AFS(mem, v) __atomic_fetch_sub(mem, v, __ATOMIC_ACQ_REL)
+
+/*
+ * Compare-And-Swap (64-bit)
+ * x86_64: Generates LOCK CMPXCHG
+ * ARM64:  Generates CASAL (LSE) or LDAXR/STLXR loop
+ *
+ * Returns: 1 on success, 0 on failure
+ * On failure, *old is updated with the current value
+ */
 static inline char CAS(
-
     atomictype *mem,
-    atomictype *old,
-    atomictype new
-
-)   {
-
-    return __sync_bool_compare_and_swap((long*)mem, *(long*)old, new);
-
+    long *old,
+    long new
+) {
+    return __atomic_compare_exchange_n(
+        mem,
+        old,
+        new,
+        0,                  /* strong: don't allow spurious failures */
+        __ATOMIC_ACQ_REL,   /* success memory order: acquire-release */
+        __ATOMIC_ACQUIRE    /* failure memory order: acquire */
+    );
 }
 
-
-#ifdef __x86_64__
-
 /*
-    DWCAS -- atomic double word compare and swap (64 bit)
-*/
+ * Double-Word Compare-And-Swap (128-bit)
+ * x86_64: Generates LOCK CMPXCHG16B (requires -mcx16)
+ * ARM64:  Generates CASPAL (LSE) or LDXP/STXP loop
+ *
+ * Note: The DWORD union must be 16-byte aligned for both architectures.
+ *
+ * Returns: 1 on success, 0 on failure
+ * On failure, *old is updated with the current value
+ */
 static inline char DWCAS(
-
     volatile DWORD *mem,
     DWORD *old,
     DWORD new
-
-)   {
-
-    uint64_t  old_h = old->high, old_l = old->low;
-    uint64_t  new_h = new.high, new_l = new.low;
-
-    char r = 0;
-    __asm__ __volatile__("lock; cmpxchg16b (%6);"
-    "setz %7; "
-    : "=a" (old_l),
-    "=d" (old_h)
-    : "0" (old_l),
-    "1" (old_h),
-    "b" (new_l),
-    "c" (new_h),
-    "r" (mem),
-    "m" (r)
-    : "cc", "memory");
-    return r;
-
+) {
+    return __atomic_compare_exchange_n(
+        &mem->full,
+        &old->full,
+        new.full,
+        0,                  /* strong */
+        __ATOMIC_ACQ_REL,   /* success memory order */
+        __ATOMIC_ACQUIRE    /* failure memory order */
+    );
 }
 
+/*============================================================================
+    Spin-Wait Pause Hint
+
+    Signals to the CPU that this is a spin-wait loop, reducing power
+    consumption and improving performance by avoiding memory order violations.
+============================================================================*/
+#if defined(__x86_64__) || defined(__i386__)
+    #define SPIN_PAUSE() __builtin_ia32_pause()
+#elif defined(__aarch64__)
+    #define SPIN_PAUSE() __asm__ __volatile__("yield" ::: "memory")
 #else
-
-/*
-    DWCAS -- atomic double word compare and swap (32 bit)
-*/
-
-static inline char DWCAS(
-
-    volatile DWORD *mem,
-    DWORD *old,
-    DWORD new
-
-)   {
-
-    return __sync_bool_compare_and_swap((long long*)mem, *(long long*)old, \
-                                        *(long long*)&new);
-}
-
-#endif
-
-#else
-
-#define AFS(mem, v) atomic_fetch_sub_explicit((atomictype *)mem, v, \
-                                              memory_order_relaxed)
-#define AFA(mem, v) atomic_fetch_add_explicit((atomictype *)mem, v, \
-                                              memory_order_relaxed)
-#define CAS(val, old, new) atomic_compare_exchange_weak_explicit(   \
-            (atomic_long*)val, (atomic_long*)old, (atomic_long)new, \
-            memory_order_relaxed, memory_order_relaxed)
-#define DWCAS(val, old, new) atomic_compare_exchange_weak_explicit(val, old, \
-              new, memory_order_relaxed, memory_order_relaxed)
-
+    #define SPIN_PAUSE() ((void)0)
 #endif
 
 
@@ -326,17 +343,6 @@ extern long remove_front(
     long gen,           // generation count
     long head,          // head slot of list
     long tail           // tail slot of list
-);
-
-
-extern view_s realloc_pooled_mem(
-
-    shr_base_s *base,           // pointer to base struct -- not NULL
-    long slot_count,            // size as number of slots
-    long head,                  // list head slot
-    long head_counter,          // list head counter slot
-    long tail                   // list tail slot
-
 );
 
 

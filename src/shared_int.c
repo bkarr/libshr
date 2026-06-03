@@ -857,7 +857,7 @@ extern bool set_flag(
     assert(array != NULL);
     assert(indicator != 0);
 
-    volatile long prev = (volatile long) array[ FLAGS ];
+    long prev = array[ FLAGS ];
 
     while ( !( prev & indicator ) ) {
 
@@ -867,7 +867,8 @@ extern bool set_flag(
 
         }
 
-        prev = (volatile long) array[ FLAGS ];
+        SPIN_PAUSE();
+        prev = array[ FLAGS ];
     }
 
     return false;
@@ -897,7 +898,7 @@ extern bool clear_flag(
     assert(indicator != 0);
 
     long mask = ~indicator;
-    volatile long prev = (volatile long) array[ FLAGS ];
+    long prev = array[ FLAGS ];
 
     while ( prev & indicator ) {
 
@@ -907,7 +908,8 @@ extern bool clear_flag(
 
         }
 
-        prev = (volatile long) array[ FLAGS ];
+        SPIN_PAUSE();
+        prev = array[ FLAGS ];
     }
 
     return false;
@@ -938,6 +940,7 @@ extern void update_buffer_size(
 
         }
 
+        SPIN_PAUSE();
         buff_sz = array[ BUFFER ];
     }
 }
@@ -964,7 +967,7 @@ extern void add_end(
     // assert(slot >= BASE);
     // assert(tail > 0);
 
-    atomictype * volatile array = (atomictype*) base->current->array;
+    atomictype *array = (atomictype*) base->current->array;
     long gen = AFA( &array[ ID_CNTR ], 1 );
     array[ slot ] = slot;
     array[ slot + 1 ] = gen;
@@ -972,10 +975,10 @@ extern void add_end(
 
     while( true ) {
 
-        DWORD tail_before = *( (DWORD * volatile) &array[ tail ] );
+        DWORD tail_before = *( (DWORD *) &array[ tail ] );
         long next = tail_before.low;
         view_s view = insure_in_range( base, next );
-        array = (atomictype * volatile) view.extent->array;
+        array = (atomictype *) view.extent->array;
 
         if ( tail_before.low == array[ next ] ) {
 
@@ -988,10 +991,12 @@ extern void add_end(
 
         } else {
 
-            DWORD tail_after = *( (DWORD* volatile) &array[ next ] );
+            DWORD tail_after = *( (DWORD*) &array[ next ] );
             DWCAS( (DWORD*) &array[ tail ], &tail_before, tail_after );
 
         }
+
+        SPIN_PAUSE();
     }
 }
 
@@ -1019,7 +1024,7 @@ extern long remove_front(
 
     assert(base != NULL);
 
-    volatile long * volatile array = base->current->array;
+    long *array = base->current->array;
     DWORD before;
     DWORD after;
 
@@ -1081,6 +1086,7 @@ extern view_s alloc_new_data(
 
         }
 
+        SPIN_PAUSE();
         view.extent = base->current;
         array = view.extent->array;
         node_alloc = array[ DATA_ALLOC ];
@@ -1097,7 +1103,7 @@ extern view_s alloc_new_data(
 /*
     realloc_pooled_mem -- attempt to allocate previously freed slots
 */
-extern view_s realloc_pooled_mem(
+static view_s realloc_pooled_mem(
 
     shr_base_s *base,           // pointer to base struct -- not NULL
     long slot_count,            // size as number of slots
@@ -1125,7 +1131,7 @@ extern view_s realloc_pooled_mem(
 
             if ( view.slot != 0 ) {
 
-                memset( (idx_leaf_s*)&array[ node_alloc ], 0, slot_count << SZ_SHIFT );
+                memset( &array[ node_alloc ], 0, slot_count << SZ_SHIFT );
 
             }
 
@@ -1165,361 +1171,6 @@ extern view_s alloc_idx_slots(
 }
 
 
-/*
-    find_leaf -- return leaf that matches count as key
-*/
-static long find_leaf(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long count,         // number of slots to return
-    long ref_index      // index node reference to begin search
-
-)   {
-
-    assert(base != NULL);
-    assert(count > 0);
-    assert(ref_index > 0);
-
-    view_s view = { .status = SH_OK, .extent = base->current, .slot = 0 };
-    long *array = view.extent->array;
-    idx_ref_s *ref = (idx_ref_s*) &array[ ref_index ];
-    uint8_t *key = (uint8_t*) &count;
-    long node_slot = ref_index;
-
-    while ( ref->flag < 0 ) {
-
-        node_slot = ref->next;
-        view = insure_in_range( base, node_slot );
-
-        if ( view.slot == 0 ) {
-
-            return 0;
-
-        }
-
-        array = view.extent->array;
-        idx_node_s *node = (idx_node_s*) &array[ node_slot ];
-        long direction = ( 1 + ( ref->bits | key[ ref->byte ] ) ) >> 8;
-        ref = &node->child[ direction ];
-
-    }
-
-    view = insure_in_range( base, ref->next );
-    if ( view.slot == 0 ) {
-
-        return 0;
-
-    }
-
-    return ref->next;
-}
-
-
-static sh_status_e add_idx_root(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long slot,          // start of slot range
-    long count          // number of slots to return
-
-)   {
-
-    assert(base != NULL);
-    assert(slot >= BASE);
-    assert(count >= 2);
-
-    view_s view = alloc_idx_slots( base );
-    if ( view.slot == 0 ) {
-
-        return SH_ERR_NOMEM;
-
-    }
-
-    long node = view.slot;
-    long *array = view.extent->array;
-    idx_ref_s *ref = (idx_ref_s*) &array[ ROOT_FREE ];
-    idx_leaf_s *leaf = (idx_leaf_s*) &array[ node ];
-    leaf->count = count;
-    leaf->allocs = slot;
-    leaf->allocs_count = 1;
-    array[ slot ] = 0;
-    array[ slot + 1 ] = 0;
-    DWORD before = { 0, 0 };
-    DWORD after = { .low = node, .high = 0 };
-
-    if ( !DWCAS( (DWORD*) ref, &before, after ) ) {
-
-        add_end( base, node, FREE_TAIL );
-        return SH_RETRY;
-
-    }
-
-    return SH_OK;
-}
-
-
-static sh_status_e add_to_leaf(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    idx_leaf_s *leaf,
-    long slot
-
-)   {
-
-    assert(base != NULL);
-    assert(leaf != NULL);
-    assert(slot >= BASE);
-
-    view_s view = insure_in_range( base, slot );
-    if ( view.slot == 0 ) {
-
-        return SH_ERR_NOMEM;
-
-    }
-
-    volatile long * volatile array = view.extent->array;
-    DWORD before = { 0 };
-    DWORD after = { 0 };
-    after.low = slot;
-
-    do {
-
-        // point current memory at next allocation
-        array[ slot + 1 ] = leaf->allocs_count;
-        array[ slot ] = leaf->allocs;
-        // init previous value
-        before.high = (volatile long) array[ slot + 1 ];
-        before.low = (volatile long) array[ slot ];
-        // init next leaf value
-        after.high = before.high + 1;
-        after.low = slot;
-
-    } while ( !DWCAS( (DWORD*) &leaf->allocs, &before, after ) ); // push down stack
-
-    return SH_OK;
-}
-
-static void diff_key(
-
-    idx_leaf_s *leaf,   // pointer to leaf -- not NULL
-    uint8_t *key,       // pointer to key -- not NULL
-    long *byte,         // byte displacement pointer -- not NULL
-    uint8_t *bits       // bit difference pointer -- not NULL
-
-)   {
-
-    /*
-        different orderings needed for endianness
-    */
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-
-    for ( *byte = 0; *byte < sizeof(long) ; (*byte)++ ) {
-
-#else
-
-    for ( *byte = sizeof(long) - 1; *byte >= 0 ; (*byte)-- ) {
-
-#endif
-
-        *bits = key[ *byte ] ^ leaf->key[ *byte ];
-        if ( *bits ) {
-
-            break;
-
-        }
-
-    }
-}
-
-
-static idx_ref_s *find_insertion_point(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    uint8_t *key,       // key of value being inserted
-    long ref_index,     // current trie node reference index
-    long byte,          // key byte index
-    uint8_t bits        // key bit differential
-
-)   {
-
-    view_s view = insure_in_range( base, ref_index );
-    long *array = view.extent->array;
-    idx_ref_s *parent = (idx_ref_s*) &array[ ref_index ];
-
-    while ( true ) {
-
-        // check for leaf
-        if ( parent->flag >= 0 ) {
-
-            break;
-
-        }
-
-        // check if key differential offset is less than parent
-        if ( parent->byte < byte ) {
-
-            break;
-
-        }
-
-        // check if key differential bits are greater than parent
-        if ( parent->byte == byte && parent->bits > bits ) {
-
-            break;
-
-        }
-
-        //advance to next child node
-        long direction = ( (1 + ( parent->bits | key[ parent->byte ] ) ) >> 8 );
-        view = insure_in_range( base, parent->next );
-        array = view.extent->array;
-        idx_node_s *pnode = (idx_node_s*) &array[ parent->next ];
-        parent = &pnode->child[ direction ];
-
-    }
-
-    return parent;
-}
-
-
-static view_s init_leaf(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long slot,          // start of slot range
-    long count          // number of slots being freed
-
-)   {
-
-    view_s view = alloc_idx_slots( base );
-    if ( view.slot == 0 ) {
-
-        view.status = SH_ERR_NOMEM;
-        return view;
-
-    }
-
-    long leaf_index = view.slot;
-    long *array = view.extent->array;
-    array[ slot ] = 0;
-    array[ slot + 1 ] = 0;
-    idx_leaf_s *leaf = (idx_leaf_s*) &array[ leaf_index ];
-    leaf->count = count;
-    leaf->allocs = slot;
-    leaf->allocs_count = 1;
-    return view;
-}
-
-
-static view_s init_node(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long leaf_index,    // index of new leaf
-    long direction,     // child ref direction for new leaf
-    idx_ref_s *parent
-
-)   {
-
-    view_s view = alloc_idx_slots( base );
-    if ( view.slot == 0 ) {
-
-        view.status = SH_ERR_NOMEM;
-        return view;
-
-    }
-
-    long node_index = view.slot;
-    long *array = view.extent->array;
-    idx_node_s *node = (idx_node_s*) &array[ node_index ];
-    idx_ref_s *ref = &node->child[ direction ];
-    ref->next = leaf_index;
-    ref = &node->child[ 1 - direction ];
-    ref->next = parent->next;
-    ref->diff = parent->diff;
-    return view;
-}
-
-
-static sh_status_e insert_node(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    idx_ref_s *parent,  // pointer to parent reference
-    long node_index,    // index of internal node
-    long byte,          // key byte index
-    uint8_t bits        // key bit differential
-
-)   {
-
-    DWORD before = { .low = parent->next, .high = parent->diff };
-    DWORD after = { 0 };
-    idx_ref_s *ref = (idx_ref_s*) &after;
-    ref->next = node_index;
-    ref->byte = byte;
-    ref->bits = bits;
-    ref->flag = -1;
-
-    if ( !DWCAS( (DWORD*) parent, &before, after ) ) {
-
-        return SH_RETRY;
-
-    }
-
-    return SH_OK;
-}
-
-
-static sh_status_e add_new_leaf(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long slot,          // start of slot range
-    long count,         // number of slots being freed
-    long ref_index,     // current trie node reference index
-    long byte,          // key byte index
-    uint8_t bits        // key bit differential
-
-)   {
-
-    // calculate bit differential mask and direction
-    uint8_t *key = (uint8_t*) &count;
-    bits = (uint8_t) ~( 1 << ( 31 - __builtin_clz( bits ) ) );
-    long direction = ( 1 + ( bits | key[ byte ] ) ) >> 8;
-
-    // find place to insert new node in trie
-    idx_ref_s *parent = find_insertion_point(base, key, ref_index, byte, bits);
-
-    // create and initialize new leaf
-    view_s view = init_leaf( base, slot, count );
-    if ( view.slot == 0 ) {
-
-        return SH_ERR_NOMEM;
-
-    }
-
-    long leaf_index = view.slot;
-
-    // create and initialize new internal node
-    view = init_node( base, leaf_index, direction, parent );
-    if ( view.slot == 0 ) {
-
-        add_end( base, leaf_index, FREE_TAIL );
-        return SH_ERR_NOMEM;
-
-    }
-
-    long node_index = view.slot;
-
-    // insert new node in tree
-    sh_status_e status = insert_node( base, parent, node_index, byte, bits );
-    if ( status == SH_RETRY ) {
-
-        // insertion failed, free trie node allocations
-        add_end( base, leaf_index, FREE_TAIL );
-        add_end( base, node_index, FREE_TAIL );
-
-    }
-
-    return status;
-}
-
-
 extern sh_status_e free_data_slots(
 
     shr_base_s *base,   // pointer to base struct -- not NULL
@@ -1527,161 +1178,63 @@ extern sh_status_e free_data_slots(
 
 )   {
 
-    sh_status_e status = SH_RETRY;
-
     long *array = base->current->array;
     long count = array[ slot ];
+    long index = __builtin_ctzl( count ) - 2;
+    long bucket = MEM_BKT_START + ( index * 2 );
 
-    do {
+    DWORD after = { .low = slot };
 
-        // check if tree is empty
-        if (array[ ROOT_FREE ] == 0) {
+    while (true) {
 
-            status = add_idx_root( base, slot, count );
+        // point current memory at next allocation
+        array[ slot + 1 ] = array[ bucket + 1 ];
+        array[ slot ] = array[ bucket ];
+        // init next bucket value
+        after.high = array[ slot + 1 ] + 1;
 
-            if ( status != SH_RETRY ) {
+        if ( DWCAS( (DWORD*) &array[ bucket ], (DWORD*) &array[ slot ], after ) ) {
 
-                return status;
-
-            }
-
-        }
-
-        long leaf = find_leaf( base, count, ROOT_FREE );
-        if ( leaf == 0 ) {
-
-            return SH_ERR_NOMEM;
+            break; // push down stack succeeded
 
         }
 
-        // evaluate differences in keys
-        long byte;
-        uint8_t bits;
-        diff_key( (idx_leaf_s*) &base->current->array[ leaf ],
-                  (uint8_t*) &count, &byte, &bits );
-        if ( bits == 0 ) {
-
-            // keys are equal
-            return add_to_leaf( base, (idx_leaf_s*)&base->current->array[ leaf ],
-                                slot );
-
-        }
-
-        // keys do not match, insert new internal node with new leaf
-        status = add_new_leaf( base, slot, count, ROOT_FREE, byte, bits );
-
-    } while ( status == SH_RETRY );
-
-    return status;
-}
-
-
-static void stack_push(
-
-    long *stack,
-    long value
-
-)   {
-
-    if ( stack[ 0 ] < TSTACK_DEPTH ) {
-
-        stack[ stack [ 0 ]++ ] = value;
-
-    } else {
-
-        memmove( stack + 1, stack + 2, ( TSTACK_DEPTH - 2 ) * sizeof(long) );
-        stack[ TSTACK_DEPTH - 1 ] = value;
-
+        SPIN_PAUSE();
     }
+
+    return SH_OK;
 }
 
 
-static long stack_pop(
-
-    long *stack
-
-)   {
-
-    return stack[ --stack[ 0 ] ];
-
-}
-
-
-static void stack_init(
-
-    long *stack
-
-)   {
-
-    stack[ 0 ] = 1;
-}
-
-
-static bool stack_empty(
-
-    long *stack
-
-)   {
-
-    return ( stack[ 0 ] <= 1 );
-}
-
-
-static long walk_trie(
+/*
+     find_first_fit -- scan memory buckets starting with bucket that matches
+     desired size 
+     
+     returns the bucket slot that matches first fit, otherwise 0 
+*/
+static long find_first_fit(
 
     shr_base_s *base,   // pointer to base struct -- not NULL
-    long count,         // number of slots to return
-    long *stack         // stack of node branches to search
+    long count          // number of slots to return
 
 )   {
 
-    while ( !stack_empty( stack ) ) {
+    if (count < 4) {
 
-        long ref_index = stack_pop( stack );
-        view_s view = insure_in_range( base, ref_index );
+        return 0;
 
-        if ( view.slot != ref_index ) {
+    }
 
-            return 0;
+    long index = __builtin_ctzl( count ) - 2;
+    
+    for ( int retries = 3; retries && index < MEM_SLOTS; retries--, index++ ) {
 
+        long bucket = MEM_BKT_START + ( 2 * index );
+        
+        if ( base->current->array[ bucket ] != 0 ) {
+
+            return bucket;
         }
-
-        long *array = view.extent->array;
-        idx_ref_s *ref = (idx_ref_s*) &array[ ref_index ];
-
-        if ( ref->flag >= 0 ) {
-
-            view = insure_in_range( base, ref->next );
-
-            if ( view.slot != ref->next ) {
-
-                return 0;
-
-            }
-
-            array = view.extent->array;
-            idx_leaf_s *leaf = (idx_leaf_s*) &array[ ref->next ];
-
-            if ( leaf->count >= count && leaf->allocs != 0 ) {
-
-                return ref->next;
-
-            }
-
-            continue;
-        }
-
-        view = insure_in_range( base, ref->next );
-
-        if ( view.slot != ref->next ) {
-
-            return 0;
-
-        }
-
-        array = view.extent->array;
-        stack_push( stack, ref->next + 2 );
-        stack_push( stack, ref->next );
 
     }
 
@@ -1689,69 +1242,8 @@ static long walk_trie(
 }
 
 
-
-static long find_first_fit(
-
-    shr_base_s *base,   // pointer to base struct -- not NULL
-    long count,         // number of slots to return
-    long ref_index      // index node reference to begin search
-
-)   {
-
-    long stack[ TSTACK_DEPTH ] = { 0 };
-    stack_init( stack );
-    view_s view = { .status = SH_OK, .extent = base->current, .slot = 0 };
-    long *array = view.extent->array;
-    idx_ref_s *ref = (idx_ref_s*) &array[ ref_index ];
-    uint8_t *key = (uint8_t*) &count;
-
-    while ( ref->flag < 0 ) {
-
-        long node_slot = ref->next;
-        view = insure_in_range( base, node_slot );
-
-        if ( view.slot == 0 ) {
-
-            return 0;
-
-        }
-
-        array = view.extent->array;
-        idx_node_s *node = (idx_node_s*) &array[ node_slot ];
-        long direction = ( 1 + (ref->bits | key[ ref->byte ] ) ) >> 8;
-        ref = &node->child[ direction ];
-
-        // save branch not taken on stack
-        if ( !direction ) {
-
-            stack_push( stack, node_slot + 2 );
-
-        }
-
-    }
-
-    view = insure_in_range( base, ref->next) ;
-    if ( view.slot == 0 ) {
-
-        return 0;
-
-    }
-
-    array = view.extent->array;
-    idx_leaf_s *leaf = (idx_leaf_s*) &array[ view.slot ];
-
-    if ( leaf->count >= count && leaf->allocs != 0 ) {
-
-        return ref->next;
-
-    }
-
-    return walk_trie( base, count, stack );
-}
-
-
 /*
-    lookup_freed_data -- looks for leaf that has first available
+    lookup_freed_data -- looks for bucket that has first available
     allocation that is larger than requested numbers slots and
     attempts to allocate from leaf
 
@@ -1767,21 +1259,19 @@ static long lookup_freed_data(
     DWORD before;
     DWORD after;
 
-    long index = find_first_fit( base, slots, ROOT_FREE );
-    if ( index == 0 ) {
+    long bucket = find_first_fit( base, slots );
+    if ( bucket == 0 ) {
 
         return 0;
 
     }
 
-    view_s view = insure_in_range( base, index );
-    long *array = view.extent->array;
-    idx_leaf_s *leaf = (idx_leaf_s*) &array[ index ];
+    long *array = base->current->array;
 
-    do {
+    while (true) {
 
-        before.low = leaf->allocs;
-        before.high = leaf->allocs_count;
+        before.low = array[ bucket ];
+        before.high = array[ bucket + 1 ];
 
         if ( before.low == 0 ) {
 
@@ -1789,14 +1279,21 @@ static long lookup_freed_data(
 
         }
 
-        view = insure_in_range( base, before.low );
+        view_s view = insure_in_range( base, before.low );
         array = view.extent->array;
-        after.low = (volatile long) array[ before.low ];
+        after.low = array[ before.low ];
         after.high = before.high + 1;
 
-    } while ( !DWCAS( (DWORD*) &leaf->allocs, &before, after ) );
+        if ( DWCAS( (DWORD*) &array[ bucket ], &before, after ) ) {
 
-    array[ before.low ] = leaf->count;
+            break;
+
+        }
+
+        SPIN_PAUSE();
+    }
+
+    array[ before.low ] =  1 << ( ( ( bucket - MEM_BKT_START ) >> 1 ) + 2 );
     return before.low;
 }
 
@@ -1818,20 +1315,16 @@ static view_s realloc_data_slots(
     view_s view = { .status = SH_OK, .extent = base->current, .slot = 0 };
     long *array = view.extent->array;
 
-    if (array[ ROOT_FREE ] != 0) {
+    long alloc_end = lookup_freed_data( base, slots );
 
-        long alloc_end = lookup_freed_data( base, slots );
+    if ( alloc_end > 0 ) {
 
-        if ( alloc_end > 0 ) {
+        view = insure_fit( base, alloc_end, slots );
+        array = view.extent->array;
 
-            view = insure_fit( base, alloc_end, slots );
-            array = view.extent->array;
+        if ( view.slot != 0 ) {
 
-            if ( view.slot != 0 ) {
-
-                memset( &array[ alloc_end + 1 ], 0, ( slots - 1 ) << SZ_SHIFT );
-
-            }
+            memset( &array[ alloc_end + 1 ], 0, ( slots - 1 ) << SZ_SHIFT );
 
         }
 
@@ -1855,19 +1348,19 @@ extern view_s alloc_data_slots(
 
 )   {
 
-    view_s view = realloc_data_slots( base, slots );
-
-    if ( view.slot != 0 ) {
-
-        return view;
-
-    }
-
     // check to see if power of 2 to reduce fragmentation
     if ( __builtin_popcountl( slots ) > 1 ) {
 
         // round up to next power of 2
         slots = 1 << (LONG_BIT - __builtin_clzl( slots ) );
+
+    }
+
+    view_s view = realloc_data_slots( base, slots );
+
+    if ( view.slot != 0 ) {
+
+        return view;
 
     }
 

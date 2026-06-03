@@ -6,6 +6,9 @@ OBJECTS = ../src/shared_q.o ../src/shared.o ../src/shared_int.o
 LIB = libshr.a
 SHARED_LIB = libshr.so
 
+# Architecture detection for conditional 32-bit flag
+UNAME_M := $(shell uname -m)
+
 all: all64
 
 rh7: all64
@@ -17,7 +20,11 @@ all64: $(OBJECTS)
 
 all32: $(OBJECTS)
 	@ar -r $(LIB) $(OBJECTS)
+ifeq ($(UNAME_M),x86_64)
 	@gcc -m32 -shared -o $(SHARED_LIB) $(OBJECTS)
+else
+	@gcc -shared -o $(SHARED_LIB) $(OBJECTS)
+endif
 	@chmod 0755 $(SHARED_LIB)
 
 

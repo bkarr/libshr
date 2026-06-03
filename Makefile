@@ -44,6 +44,43 @@ all32:
 		cd ..; \
 	done
 
+# ARM64/Graviton optimized builds
+graviton2:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) GRAVITON=2 all64; \
+		cd ..; \
+	done
+
+graviton3:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) GRAVITON=3 all64; \
+		cd ..; \
+	done
+
+graviton4:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) GRAVITON=4 all64; \
+		cd ..; \
+	done
+
+graviton5:
+	@set -e
+	@for i in $(MKDIRS); \
+	do \
+		cd $$i; \
+		$(MAKE) GRAVITON=5 all64; \
+		cd ..; \
+	done
+
 clean:
 	@set -e
 	@for i in $(SUBDIRS); \
@@ -81,3 +118,4 @@ examples:
 	done
 
 .PHONY: all all64 all32 clean check install examples
+.PHONY: graviton2 graviton3 graviton4 graviton5

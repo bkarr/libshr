@@ -70,7 +70,7 @@ THE SOFTWARE.
 enum shr_q_constants
 {
 
-    QVERSION = 2,           // queue memory layout version - spread head and tail to different cache lines
+    QVERSION = 3,           // queue memory layout version - spread head and tail to different cache lines
     NODE_SIZE = 4,          // node slot count
     EVENT_OFFSET = 2,       // offset in node for event for queued item
     VALUE_OFFSET = 3,       // offset in node for data slot for queued item
@@ -233,10 +233,11 @@ static inline long calc_data_slots(
 
 static long copy_value(
 
-    shr_q_s *q,         // pointer to queue struct
-    void *value,        // pointer to value data
-    long length,        // length of data
-    sh_type_e type      // data type
+    shr_q_s *q,                     // pointer to queue struct
+    void *value,                    // pointer to value data
+    long length,                    // length of data
+    sh_type_e type,                 // data type
+    struct timespec *curr_time      // timestamp for the data
 
 )   {
 
@@ -246,8 +247,6 @@ static long copy_value(
 
     }
 
-    struct timespec curr_time;
-    clock_gettime( CLOCK_REALTIME, &curr_time );
     long space = calc_data_slots( length );
     update_buffer_size( q->current->array, space, sizeof(sq_vec_s) );
     view_s view = alloc_data_slots( (shr_base_s*)q, space );
@@ -256,14 +255,16 @@ static long copy_value(
     if ( current >= HDR_END ) {
 
         long *array = view.extent->array;
-        array[ current + TM_SEC ] = curr_time.tv_sec;
-        array[ current + TM_NSEC ] = curr_time.tv_nsec;
+        array[ current + TM_SEC ] = curr_time->tv_sec;
+        array[ current + TM_NSEC ] = curr_time->tv_nsec;
         array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
         array[ current + TYPE ] = type;
         array[ current + VEC_CNT ] = 1;
         array[ current + DATA_LENGTH ] = length;
         memcpy( &array[ current + DATA_HDR ], value, length );
 
+        /* Ensure all writes are visible before returning slot for publication */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
     }
 
     return current;
@@ -301,9 +302,10 @@ static long calc_vector_slots(
 
 static long copy_vector(
 
-    shr_q_s *q,         // pointer to queue struct -- not NULL
-    sq_vec_s *vector,   // pointer to vector of items -- not NULL
-    int vcnt            // count of vector array -- must be >= 2
+    shr_q_s *q,                     // pointer to queue struct -- not NULL
+    sq_vec_s *vector,               // pointer to vector of items -- not NULL
+    int vcnt,                       // count of vector array -- must be >= 2
+    struct timespec *curr_time      // timestamp for the data
 
 )   {
 
@@ -313,8 +315,6 @@ static long copy_vector(
 
     }
 
-    struct timespec curr_time;
-    clock_gettime( CLOCK_REALTIME, &curr_time );
     long space = calc_vector_slots( vector, vcnt );
     update_buffer_size( q->current->array, space, vcnt * sizeof(sq_vec_s) );
     view_s view = alloc_data_slots( (shr_base_s*)q, space );
@@ -323,8 +323,8 @@ static long copy_vector(
     if ( current >= HDR_END ) {
 
         long *array = view.extent->array;
-        array[ current + TM_SEC ] = curr_time.tv_sec;
-        array[ current + TM_NSEC ] = curr_time.tv_nsec;
+        array[ current + TM_SEC ] = curr_time->tv_sec;
+        array[ current + TM_NSEC ] = curr_time->tv_nsec;
         array[ current + UID ] = AFA( &array[ ID_CNTR ], 1);
         array[ current + TYPE ] = SH_VECTOR_T;
         array[ current + VEC_CNT ] = vcnt;
@@ -353,6 +353,9 @@ static long copy_vector(
 
             }
         }
+
+        /* Ensure all writes are visible before returning slot for publication */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
     }
 
     return current;
@@ -365,21 +368,21 @@ static void signal_arrival(
 
 )   {
 
-    if ( q->current->array[ LISTEN_SIGNAL ] == 0 ||
-         q->current->array[ LISTEN_PID ] == 0 ) {
+    long *array = q->current->array;
+
+    if ( array[ LISTEN_SIGNAL ] == 0 || array[ LISTEN_PID ] == 0 ) {
 
         return;
 
     }
 
     int sval = -1;
-    (void)sem_getvalue( (sem_t*)&q->current->array[ DEQ_SEM ], &sval );
+    (void)sem_getvalue( (sem_t*)&array[ DEQ_SEM ], &sval );
     union sigval sv = { .sival_int = sval };
 
     if ( sval == 0 ) {
 
-        (void)sigqueue(q->current->array[ LISTEN_PID ],
-                       q->current->array[ LISTEN_SIGNAL ], sv);
+        (void)sigqueue( array[ LISTEN_PID ], array[ LISTEN_SIGNAL ], sv );
 
     }
 
@@ -392,16 +395,16 @@ static void signal_event(
 
 )   {
 
-    if ( q->current->array[ NOTIFY_PID ] == 0 ||
-         q->current->array[ NOTIFY_SIGNAL ] == 0 ) {
+    long *array = q->current->array;
+
+    if ( array[ NOTIFY_PID ] == 0 || array[ NOTIFY_SIGNAL ] == 0 ) {
 
         return;
 
     }
 
     union sigval sv = { 0 };
-    (void)sigqueue( q->current->array[ NOTIFY_PID ],
-                    q->current->array[ NOTIFY_SIGNAL ], sv );
+    (void)sigqueue( array[ NOTIFY_PID ], array[ NOTIFY_SIGNAL ], sv );
 }
 
 
@@ -411,16 +414,16 @@ static void signal_call(
 
 )   {
 
-    if ( q->current->array[ CALL_PID ] == 0 ||
-        q->current->array[ CALL_SIGNAL ] == 0 ) {
+    long *array = q->current->array;
+
+    if ( array[ CALL_PID ] == 0 || array[ CALL_SIGNAL ] == 0 ) {
 
         return;
 
     }
 
     union sigval sv = { 0 };
-    (void)sigqueue( q->current->array[ CALL_PID ],
-                    q->current->array[ CALL_SIGNAL ], sv );
+    (void)sigqueue( array[ CALL_PID ], array[ CALL_SIGNAL ], sv );
 }
 
 
@@ -588,7 +591,7 @@ static void update_empty_timestamp(
 
     struct timespec curr_time;
     clock_gettime( CLOCK_REALTIME, &curr_time );
-    struct timespec last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+    struct timespec last = *(struct timespec *) &array[ EMPTY_SEC ];
     DWORD next = { .low = curr_time.tv_sec, .high = curr_time.tv_nsec };
 
     while ( timespeccmp(&curr_time, &last, > ) ) {
@@ -599,7 +602,7 @@ static void update_empty_timestamp(
 
         }
 
-        last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+        last = *(struct timespec *) &array[ EMPTY_SEC ];
     }
 }
 
@@ -612,7 +615,7 @@ static void lifo_add(
 )   {
 
     view_s view = insure_in_range( (shr_base_s*) q, slot );
-    atomictype * volatile array = (atomictype*) view.extent->array;
+    atomictype *array = (atomictype*) view.extent->array;
 
     DWORD stack_before;
     DWORD stack_after;
@@ -621,7 +624,7 @@ static void lifo_add(
 
         array[ slot ] = array[ STACK_HEAD ];
         array[ slot + 1 ] = array[ STACK_HD_CNT ];
-        stack_before = *( (DWORD * volatile) &array[ slot ] );
+        stack_before = *( (DWORD *) &array[ slot ] );
         stack_after.low = slot;
         stack_after.high = stack_before.high + 1;
 
@@ -698,13 +701,12 @@ static inline void fifo_add(
 static sh_status_e enq_data(
 
     shr_q_s *q,         // pointer to queue, not NULL
-    long data_slot      // data to be added to queue
+    long data_slot,     // data to be added to queue
+    DWORD curr_time     // timestamp of the data
 
 )   {
 
     long *array = q->current->array;
-    DWORD curr_time = { .low = array[ data_slot + TM_SEC ],
-                        .high = array[ data_slot + TM_NSEC ] };
 
     // allocate queue node
     view_s view = alloc_idx_slots( (shr_base_s*) q );
@@ -756,8 +758,11 @@ static sh_status_e enq(
 
     }
 
+    struct timespec curr_time;
+    clock_gettime( CLOCK_REALTIME, &curr_time );
+
     // allocate space and copy value
-    long data_slot = copy_value( q, value, length, type );
+    long data_slot = copy_value( q, value, length, type, &curr_time );
 
     if ( data_slot == 0 ) {
 
@@ -771,7 +776,8 @@ static sh_status_e enq(
 
     }
 
-    return enq_data( q, data_slot );
+    DWORD timestamp = { .low = curr_time.tv_sec, .high = curr_time.tv_nsec };
+    return enq_data( q, data_slot, timestamp );
 }
 
 
@@ -789,9 +795,12 @@ static sh_status_e enqv(
 
     }
 
+    struct timespec curr_time;
+    clock_gettime( CLOCK_REALTIME, &curr_time );
+
     long data_slot;
     // allocate space and copy vector
-    data_slot = copy_vector( q, vector, vcnt );
+    data_slot = copy_vector( q, vector, vcnt, &curr_time );
 
     if ( data_slot < 0 ) {
 
@@ -811,7 +820,8 @@ static sh_status_e enqv(
 
     }
 
-    return enq_data( q, data_slot );
+    DWORD timestamp = { .low = curr_time.tv_sec, .high = curr_time.tv_nsec };
+    return enq_data( q, data_slot, timestamp );
 }
 
 
@@ -944,14 +954,14 @@ static void clear_empty_timestamp(
 
 )   {
 
-    volatile struct timespec last =
-        *(struct timespec * volatile) &array[ EMPTY_SEC ];
+    struct timespec last =
+        *(struct timespec *) &array[ EMPTY_SEC ];
 
     DWORD next = { .high = 0, .low = 0 };
 
     while ( !DWCAS( (DWORD*) &array[ EMPTY_SEC ], (DWORD*) &last, next ) ) {
 
-        last = *(struct timespec * volatile) &array[ EMPTY_SEC ];
+        last = *(struct timespec *) &array[ EMPTY_SEC ];
 
     }
 }
@@ -1080,7 +1090,7 @@ static long remove_top(
 )   {
 
     view_s view = { .status = SH_OK, .extent = q->current, .slot = 0 };
-    volatile long * volatile array = view.extent->array;
+    long *array = view.extent->array;
     DWORD before;
     DWORD after;
 
@@ -1253,8 +1263,7 @@ static void post_process_deq(
 
     } else {
 
-        free_data_slots( (shr_base_s*) q, data_slot );
-        item->status = SH_OK;
+        item->status = free_data_slots( (shr_base_s*) q, data_slot );
 
     }
 
@@ -1409,13 +1418,15 @@ static bool is_valid_queue(
 
 )   {
 
-    if ( memcmp( &q->current->array[ TAG ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
+    long *array = q->current->array;
+
+    if ( memcmp( &array[ TAG ], SHRQ, sizeof(SHRQ) - 1 ) != 0 ) {
 
         return false;
 
     }
 
-    if ( q->current->array[ VERSION ] != QVERSION ) {
+    if ( array[ VERSION ] != QVERSION ) {
 
         return false;
 
@@ -1462,11 +1473,13 @@ static sh_status_e deq_gate_try(
 
 )   {
 
-    while ( sem_trywait( (sem_t*) &q->current->array[ DEQ_SEM ] ) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_trywait( (sem_t*) &array[ DEQ_SEM ] ) < 0 ) {
 
         if ( errno == EAGAIN ) {
 
-            if ( is_call_monitored( q->current->array ) ) {
+            if ( is_call_monitored( array ) ) {
 
                 signal_call( q );
 
@@ -1493,23 +1506,25 @@ static sh_status_e deq_gate_blk(
 
 )   {
 
-    (void) AFA( &q->current->array[CALL_BLOCKS], 1 );
+    long *array = q->current->array;
 
-    if ( is_call_monitored( q->current->array ) ) {
+    (void) AFA( &array[ CALL_BLOCKS ], 1 );
+
+    if ( is_call_monitored( array ) ) {
         signal_call( q );
     }
 
-    while ( sem_wait( (sem_t*) &q->current->array[ DEQ_SEM ] ) < 0 ) {
+    while ( sem_wait( (sem_t*) &array[ DEQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
 
-            (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
+            (void) AFA( &array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_STATE;
 
         }
     }
 
-    (void) AFA( &q->current->array[CALL_UNBLOCKS], 1 );
+    (void) AFA( &array[ CALL_UNBLOCKS ], 1 );
     return SH_OK;
 }
 
@@ -1521,9 +1536,11 @@ static sh_status_e deq_gate_tm(
 
 )   {
 
-    (void) AFA( &q->current->array[ CALL_BLOCKS ], 1 );
+    long *array = q->current->array;
 
-    if ( is_call_monitored( q->current->array ) ) {
+    (void) AFA( &array[ CALL_BLOCKS ], 1 );
+
+    if ( is_call_monitored( array ) ) {
 
         signal_call( q );
 
@@ -1533,24 +1550,24 @@ static sh_status_e deq_gate_tm(
     clock_gettime( CLOCK_REALTIME, &ts );
     timespecadd( &ts, timeout, &ts );
 
-    while ( sem_timedwait( (sem_t*) &q->current->array[ DEQ_SEM ], &ts ) < 0 ) {
+    while ( sem_timedwait( (sem_t*) &array[ DEQ_SEM ], &ts ) < 0 ) {
 
         if ( errno == ETIMEDOUT ) {
 
-            (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
+            (void) AFA( &array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_EMPTY;
 
         }
 
         if ( errno == EINVAL ) {
 
-            (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
+            (void) AFA( &array[ CALL_UNBLOCKS ], 1 );
             return SH_ERR_STATE;
 
         }
     }
 
-    (void) AFA( &q->current->array[ CALL_UNBLOCKS ], 1 );
+    (void) AFA( &array[ CALL_UNBLOCKS ], 1 );
     return SH_OK;
 }
 
@@ -1561,7 +1578,9 @@ static sh_status_e enq_gate_try(
 
 )   {
 
-    while ( sem_trywait( (sem_t*) &q->current->array[ ENQ_SEM ] ) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_trywait( (sem_t*) &array[ ENQ_SEM ] ) < 0 ) {
 
         if ( errno == EAGAIN ) {
 
@@ -1586,7 +1605,9 @@ static sh_status_e enq_gate_blk(
 
 )   {
 
-    while ( sem_wait( (sem_t*) &q->current->array[ ENQ_SEM ] ) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_wait( (sem_t*) &array[ ENQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
 
@@ -1636,7 +1657,9 @@ static sh_status_e deq_release_gate(
 
 )   {
 
-    while ( sem_post( (sem_t*) &q->current->array[ DEQ_SEM ]) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_post( (sem_t*) &array[ DEQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
 
@@ -1655,7 +1678,9 @@ static sh_status_e enq_release_gate(
 
 )   {
 
-    while ( sem_post( (sem_t*) &q->current->array[ ENQ_SEM ] ) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_post( (sem_t*) &array[ ENQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
 
@@ -1942,8 +1967,9 @@ extern sh_status_e shr_q_monitor(
 
     guard_q_memory( q );
 
+    long *array = q->current->array;
     long pid = getpid();
-    long prev = q->current->array[ NOTIFY_PID ];
+    long prev = array[ NOTIFY_PID ];
 
     if ( signal == 0 ) {
 
@@ -1951,10 +1977,9 @@ extern sh_status_e shr_q_monitor(
 
     }
 
+    if ( CAS( &array[ NOTIFY_PID ], &prev, pid ) ) {
 
-    if ( CAS( &q->current->array[ NOTIFY_PID ], &prev, pid ) ) {
-
-        q->current->array[ NOTIFY_SIGNAL ] = signal;
+        array[ NOTIFY_SIGNAL ] = signal;
         unguard_q_memory( q );
         return SH_OK;
 
@@ -1996,8 +2021,9 @@ extern sh_status_e shr_q_listen(
 
     guard_q_memory( q );
 
+    long *array = q->current->array;
     long pid = getpid();
-    long prev = q->current->array[ LISTEN_PID ];
+    long prev = array[ LISTEN_PID ];
 
     if ( signal == 0 ) {
 
@@ -2005,9 +2031,9 @@ extern sh_status_e shr_q_listen(
 
     }
 
-    if ( CAS( &q->current->array[ LISTEN_PID ], &prev, pid ) ) {
+    if ( CAS( &array[ LISTEN_PID ], &prev, pid ) ) {
 
-        q->current->array[ LISTEN_SIGNAL ] = signal;
+        array[ LISTEN_SIGNAL ] = signal;
         unguard_q_memory( q );
         return SH_OK;
 
@@ -2049,8 +2075,9 @@ extern sh_status_e shr_q_call(
 
     guard_q_memory( q );
 
+    long *array = q->current->array;
     long pid = getpid();
-    long prev = q->current->array[ CALL_PID ];
+    long prev = array[ CALL_PID ];
 
     if ( signal == 0 ) {
 
@@ -2058,10 +2085,9 @@ extern sh_status_e shr_q_call(
 
     }
 
+    if ( CAS( &array[ CALL_PID ], &prev, pid ) ) {
 
-    if ( CAS( &q->current->array[ CALL_PID ], &prev, pid ) ) {
-
-        q->current->array[ CALL_SIGNAL ] = signal;
+        array[ CALL_SIGNAL ] = signal;
         unguard_q_memory( q );
         return SH_OK;
 
@@ -2858,7 +2884,7 @@ extern sq_event_e shr_q_event_timedwait(
     clock_gettime( CLOCK_REALTIME, &ts );
     timespecadd( &ts, timeout, &ts );
 
-    while ( sem_timedwait( (sem_t*) &q->current->array[ EVNT_SEM ], &ts ) < 0 ) {
+    while ( sem_timedwait( (sem_t*) &array[ EVNT_SEM ], &ts ) < 0 ) {
 
         if ( errno == ETIMEDOUT || errno == EINVAL ) {
 
@@ -3095,8 +3121,8 @@ extern sh_status_e shr_q_timelimit(
 
     do {
 
-        prev.tv_sec = (volatile time_t) array[ LIMIT_SEC ];
-        prev.tv_nsec = (volatile long) array[ LIMIT_NSEC ];
+        prev.tv_sec = array[ LIMIT_SEC ];
+        prev.tv_nsec = array[ LIMIT_NSEC ];
 
     } while ( !DWCAS( (DWORD*) &array[ LIMIT_SEC ], (DWORD*) &prev, next ) );
 
@@ -3247,14 +3273,16 @@ extern sh_status_e shr_q_last_empty(
 
     guard_q_memory( q );
 
-    if ( q->current->array[COUNT] == 0 ) {
+    long *array = q->current->array;
+
+    if ( array[ COUNT ] == 0 ) {
 
         unguard_q_memory( q );
         return SH_ERR_EMPTY;
 
     }
 
-    *timestamp = *(struct timespec *) &q->current->array[ EMPTY_SEC ];
+    *timestamp = *(struct timespec *) &array[ EMPTY_SEC ];
     unguard_q_memory( q );
     return SH_OK;
 }
@@ -3524,7 +3552,9 @@ extern sh_status_e shr_q_prod(
 
     guard_q_memory( q );
 
-    while ( sem_post( (sem_t*) &q->current->array[ DEQ_SEM ] ) < 0 ) {
+    long *array = q->current->array;
+
+    while ( sem_post( (sem_t*) &array[ DEQ_SEM ] ) < 0 ) {
 
         if ( errno == EINVAL ) {
 
@@ -3557,8 +3587,9 @@ extern long shr_q_call_count(
 
     guard_q_memory( q );
 
-    long unblocks = q->current->array[ CALL_UNBLOCKS ];
-    long result = q->current->array[ CALL_BLOCKS]  - unblocks;
+    long *array = q->current->array;
+    long unblocks = array[ CALL_UNBLOCKS ];
+    long result = array[ CALL_BLOCKS ] - unblocks;
 
     unguard_q_memory( q );
     return result;
@@ -3600,8 +3631,8 @@ extern sh_status_e shr_q_target_delay(
 
     do {
 
-        prev.tv_sec = (volatile time_t) array[ TARGET_SEC ];
-        prev.tv_nsec = (volatile long) array[ TARGET_NSEC ];
+        prev.tv_sec = array[ TARGET_SEC ];
+        prev.tv_nsec = array[ TARGET_NSEC ];
 
     } while ( !DWCAS( (DWORD*) &array[ TARGET_SEC ], (DWORD*) &prev, next ) );
 
