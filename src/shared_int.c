@@ -56,10 +56,6 @@ enum shr_int_constants
 };
 
 
-// static null value for use in CAS
-static void *null = NULL;
-
-
 /*
     convert_to_status -- converts errno value to sh_status_e value
 
@@ -579,7 +575,17 @@ extern view_s resize_extent(
     // update current extent
     extent_s *tail = view.extent;
 
-    if ( CAS( (long*) &tail->next, (long*) &null, (long) next ) ) {
+    /*
+     * Expected value MUST be a per-call stack local: CAS() writes the current
+     * value back into *expected on failure. A shared/global expected variable
+     * gets clobbered when concurrent threads sharing one handle race to grow
+     * the same queue, corrupting subsequent resizes (drives base->current to
+     * NULL -> SEGV). Inter-process producers each have a private handle and
+     * never contend here, which is why this stayed latent. See regression
+     * harness in token_monitor/volume_test3.py.
+     */
+    void *expected_next = NULL;
+    if ( CAS( (long*) &tail->next, (long*) &expected_next, (long) next ) ) {
 
         CAS( (long*) &base->current, (long*) &tail, (long) next );
 
