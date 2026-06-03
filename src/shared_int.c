@@ -57,6 +57,62 @@ enum shr_int_constants
 
 
 /*
+    reference to critbit trie node
+*/
+struct idx_ref
+{
+
+    long next;
+
+    union {
+
+        struct {
+
+            int8_t  flag;
+            uint8_t bits;
+            uint8_t spares[ sizeof(halfword) - 2 ];
+            halfword byte;
+
+        };
+
+        long diff;
+
+    };
+
+};
+
+
+/*
+    internal node of critbit trie index
+*/
+struct idx_node
+{
+
+    idx_ref_s child[ 2 ];
+
+};
+
+
+/*
+    leaf node of critbit trie index
+*/
+struct idx_leaf
+{
+
+    union
+    {
+
+        uint8_t key[ sizeof(long) ];
+        long count;
+
+    };
+
+    long pad;
+    long allocs;
+    long allocs_count;
+
+};
+/*
     convert_to_status -- converts errno value to sh_status_e value
 
     returns sh_status_e:
