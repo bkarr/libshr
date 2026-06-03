@@ -1,0 +1,4 @@
+# Normalize line endings: detect text files automatically, store them with LF
+# in the repo, and check them out with LF on every platform (including Windows
+# editors used against a WSL checkout). Prevents spurious whole-file CRLF diffs.
+* text=auto eol=lf
