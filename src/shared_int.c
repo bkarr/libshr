@@ -724,21 +724,40 @@ extern view_s expand(
 
     }
 
-    // attempt to extend shared memory
-    while ( ftruncate( base->fd, array[ EXPAND_SIZE ] ) < 0 ) {
+    // Grow the backing file. Use posix_fallocate, which is GROW-ONLY: it never
+    // shrinks a file that is already large enough. Plain ftruncate is absolute,
+    // so a thread that evaluated a stale-smaller EXPAND_SIZE could shrink the
+    // file below a SIZE another thread already published, leaving an extent
+    // mapped past end-of-file -> SIGBUS on access. The queue never shrinks, so
+    // grow-only is correct. Capture the target so SIZE is published only up to
+    // what THIS call actually grew the file to.
+    long target = array[ EXPAND_SIZE ];
+    int frc;
+    while ( ( frc = posix_fallocate( base->fd, 0, target ) ) == EINTR ) {
+        ; /* interrupted -- retry */
+    }
+    if ( frc != 0 ) {
 
-        if ( errno != EINTR ) {
-
-            view.status = SH_ERR_NOMEM;
-            return view;
-
-        }
+        view.status = SH_ERR_NOMEM;
+        return view;
 
     }
 
-    // attempt to update size with reallocated value
-    prev >>= SZ_SHIFT;
-    CAS( &array[ SIZE ], &prev, array[ EXPAND_SIZE ] >> SZ_SHIFT );
+    // Publish SIZE only up to what we grew the file to. The file is now >=
+    // target and never shrinks, so SIZE stays <= the real file size for every
+    // concurrent expander -- no extent is ever mapped beyond end-of-file.
+    long tslots = target >> SZ_SHIFT;
+    long sprev = array[ SIZE ];
+    while ( sprev < tslots ) {
+
+        if ( CAS( &array[ SIZE ], &sprev, tslots ) ) {
+
+            break;
+
+        }
+        SPIN_PAUSE();
+
+    }
 
     if ( extent->slots != array[ SIZE ] ) {
 
